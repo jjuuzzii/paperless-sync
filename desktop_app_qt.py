@@ -43,15 +43,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
-# Core-Backend-Module (config_manager, i18n, ...) leben in
-# src/paperless_sync/core/ - src/ muss auf den Suchpfad, BEVOR die
-# folgenden lokalen Imports ausgefuehrt werden: desktop_state/
-# desktop_controller/dialogs_qt importieren transitiv selbst aus
-# paperless_sync.core.
+# Core-/State-Module (config_manager, i18n, AppState, Controller, ...)
+# leben in src/paperless_sync/ - src/ muss auf den Suchpfad, BEVOR die
+# folgenden lokalen Imports ausgefuehrt werden: dialogs_qt importiert
+# transitiv selbst aus paperless_sync.core.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from desktop_state import AppState
-from desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
+from paperless_sync.state.desktop_state import AppState
+from paperless_sync.state.desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
 from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
 from paperless_sync.core.config_manager import get_resource_dir
 from theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
