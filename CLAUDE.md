@@ -10,17 +10,18 @@ Paperless Sync ist ein Windows-Desktop-Tool (PySide6/Qt), das Banktransaktionen 
 
 | Datei | Zuständigkeit |
 |---|---|
-| `desktop_app_qt.py` | Aktuelle Qt-UI: Hauptfenster, Sidebar, Karten-Rendering, Handler |
-| `dialogs_qt.py` | Qt-Dialoge: Einstellungen, Dokumentenauswahl, PDF-Viewer, CSV-Spalten-Mapping |
-| `desktop_state.py` | Anwendungszustand (`AppState`), framework-unabhängig |
-| `desktop_controller.py` | Nutzeraktionen → Zustandsänderungen (`Controller`) |
-| `matcher.py` | Baut Transaktionen aus der CSV, gleicht sie gegen Paperless-Dokumente ab |
-| `paperless_client.py` | Dünner Paperless-ngx-REST-API-Wrapper |
-| `exporter.py` | Erzeugt den monatlichen Export-Ordner für den Steuerberater |
-| `csv_utils.py` | Encoding-/Trennzeichen-/Betrag-/Datums-Parsing |
-| `config_manager.py` | Lädt/speichert `.env` und `config.json` |
-| `backup.py` | ZIP-Backup/-Restore aller Nutzerdaten |
-| `i18n.py` | Minimale DE/EN-Übersetzung der Oberfläche |
+| `run_app.py` | Einstiegspunkt (`python run_app.py`), setzt `sys.path` und startet die Qt-UI |
+| `src/paperless_sync/ui_qt/desktop_app_qt.py` | Aktuelle Qt-UI: Hauptfenster, Sidebar, Karten-Rendering, Handler |
+| `src/paperless_sync/ui_qt/dialogs_qt.py` | Qt-Dialoge: Einstellungen, Dokumentenauswahl, PDF-Viewer, CSV-Spalten-Mapping |
+| `src/paperless_sync/state/desktop_state.py` | Anwendungszustand (`AppState`), framework-unabhängig |
+| `src/paperless_sync/state/desktop_controller.py` | Nutzeraktionen → Zustandsänderungen (`Controller`) |
+| `src/paperless_sync/core/matcher.py` | Baut Transaktionen aus der CSV, gleicht sie gegen Paperless-Dokumente ab |
+| `src/paperless_sync/core/paperless_client.py` | Dünner Paperless-ngx-REST-API-Wrapper |
+| `src/paperless_sync/core/exporter.py` | Erzeugt den monatlichen Export-Ordner für den Steuerberater |
+| `src/paperless_sync/core/csv_utils.py` | Encoding-/Trennzeichen-/Betrag-/Datums-Parsing |
+| `src/paperless_sync/core/config_manager.py` | Lädt/speichert `.env` und `config.json` |
+| `src/paperless_sync/core/backup.py` | ZIP-Backup/-Restore aller Nutzerdaten |
+| `src/paperless_sync/core/i18n.py` | Minimale DE/EN-Übersetzung der Oberfläche |
 | `tx_status.py` | Zentrale Transaktions-Status-Werte (siehe unten) |
 | `version.py` | Zentrale Versionsnummer (`__version__`) |
 

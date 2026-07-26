@@ -1,6 +1,7 @@
 """Baut die eigenstaendige Windows-.exe fuer die Paperless Sync Desktop-App
-(PySide6/Qt, siehe desktop_app_qt.py) via PyInstaller, und im Anschluss -
-falls Inno Setup installiert ist - direkt den Windows-Installer daraus.
+(PySide6/Qt, Einstiegspunkt run_app.py, UI-Code in
+src/paperless_sync/ui_qt/) via PyInstaller, und im Anschluss - falls Inno
+Setup installiert ist - direkt den Windows-Installer daraus.
 
 Voraussetzung:  pip install -r requirements-build.txt
 Ausfuehren:      python build/build.py

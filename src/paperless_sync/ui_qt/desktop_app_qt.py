@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
@@ -43,17 +42,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
-# Core-/State-Module (config_manager, i18n, AppState, Controller, ...)
-# leben in src/paperless_sync/ - src/ muss auf den Suchpfad, BEVOR die
-# folgenden lokalen Imports ausgefuehrt werden: dialogs_qt importiert
-# transitiv selbst aus paperless_sync.core.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
+# sys.path (Repo-Root + src/) wird vom Einstiegspunkt (run_app.py) VOR dem
+# Import dieses Moduls gesetzt - noetig fuer "from version import ..."
+# (Repo-Root) und die paperless_sync.core/state-Imports unten (src/).
 from paperless_sync.state.desktop_state import AppState
 from paperless_sync.state.desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
-from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
+from .dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
 from paperless_sync.core.config_manager import get_resource_dir
-from theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
+from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
 from paperless_sync.core.i18n import tr, set_language
 from version import __version__
 

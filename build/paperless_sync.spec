@@ -51,7 +51,8 @@ for pkg in ("streamlit", "cryptography"):
 # App-Quellcode + Laufzeit-Konfiguration, die Streamlit/die App selbst aus
 # dem gebuendelten Verzeichnis lesen muss. app.py liegt im Quellcode jetzt
 # in legacy/, landet im Bundle aber weiterhin flach im Root ("."), damit
-# run_app.py.resolve_app_path() (frozen-Zweig) unveraendert funktioniert.
+# run_streamlit_legacy.py.resolve_app_path() (frozen-Zweig) unveraendert
+# funktioniert.
 # Die Core-/State-Backend-Module liegen jetzt unter src/paperless_sync/ -
 # muessen inkl. aller __init__.py als echtes Package ins Bundle, sonst
 # schlagen app.py's "from paperless_sync.core.xxx import ..."/
@@ -60,6 +61,7 @@ for pkg in ("streamlit", "cryptography"):
 # sys.path).
 datas += [
     (os.path.join(REPO_ROOT, "legacy", "app.py"), "."),
+    (os.path.join(REPO_ROOT, "legacy", "run_streamlit_legacy.py"), "."),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "__init__.py"), "paperless_sync"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "__init__.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "config_manager.py"), "paperless_sync/core"),
@@ -76,7 +78,9 @@ datas += [
 ]
 
 a = Analysis(
-    [os.path.join(REPO_ROOT, "run_app.py")],
+    # run_app.py im Repo-Root ist seit Schritt 7 der Einstiegspunkt der
+    # aktuellen Qt-UI - der Streamlit-Launcher liegt separat in legacy/.
+    [os.path.join(REPO_ROOT, "legacy", "run_streamlit_legacy.py")],
     pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "src")],
     binaries=binaries,
     datas=datas,

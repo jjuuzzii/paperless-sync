@@ -1,7 +1,7 @@
 """Baut die ALTE Streamlit-Weboberflaeche als .exe (ARCHIVIERT/LEGACY,
 siehe legacy/README.md und app.py in diesem Ordner).
 
-Die aktuelle Oberflaeche (PySide6/Qt, siehe desktop_app_qt.py) wird ueber
+Die aktuelle Oberflaeche (PySide6/Qt, Einstiegspunkt run_app.py) wird ueber
 `build/build.py` gebaut - dieses Skript bleibt nur als Fallback erhalten,
 falls die Streamlit-Variante noch gebraucht wird.
 

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from paperless_sync.core.backup import create_backup, restore_backup, backup_filename
 from paperless_sync.core.config_manager import get_resource_dir, csv_signature as compute_csv_signature, PLACEHOLDER_TOKEN
 from paperless_sync.core.paperless_client import PaperlessClient
-from theme_qt import COLORS, font as qfont
+from .theme_qt import COLORS, font as qfont
 from paperless_sync.core.i18n import tr, set_language, get_language
 
 

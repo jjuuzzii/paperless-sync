@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller-Spec fuer den PySide6/Qt-UI-Prototyp (desktop_app_qt.py).
-Getrennt von desktop_app.spec (CustomTkinter-Version, archiviert) - baut in
-einen eigenen Ordner, ohne die bestehende CTk-.exe zu beruehren.
+PyInstaller-Spec fuer die aktuelle PySide6/Qt-UI (Einstiegspunkt:
+run_app.py, UI-Quellcode in src/paperless_sync/ui_qt/). Getrennt von
+desktop_app.spec (CustomTkinter-Version, archiviert) - baut in einen
+eigenen Ordner, ohne die alte CTk-.exe zu beruehren.
 
 Build-Befehl (Aufrufverzeichnis egal - Pfade in dieser Datei sind relativ
 zu SPECPATH aufgeloest, siehe build/build.py fuer Details zu --workpath):
@@ -32,10 +33,10 @@ if has_icon:
     datas.append((os.path.join(SPECPATH, "icon.ico"), "."))
 
 a = Analysis(
-    [os.path.join(REPO_ROOT, "desktop_app_qt.py")],
-    # REPO_ROOT fuer desktop_app_qt.py/desktop_state.py/desktop_controller.py,
-    # zusaetzlich src/ fuer die Core-Backend-Module (paperless_sync.core.*),
-    # die desktop_app_qt.py transitiv importiert.
+    [os.path.join(REPO_ROOT, "run_app.py")],
+    # REPO_ROOT fuer run_app.py selbst und version.py, zusaetzlich src/ fuer
+    # das komplette paperless_sync-Package (ui_qt/, state/, core/), das
+    # run_app.py transitiv importiert.
     pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "src")],
     binaries=[],
     datas=datas,
