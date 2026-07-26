@@ -168,12 +168,11 @@ _EN: dict[str, str] = {
         "Interface language. Takes effect only after restarting the app.",
     "Neustart erforderlich, damit die Sprache wechselt.": "Restart required for the language change to take effect.",
     "Firmenlogo": "Company logo",
-    "Eigenes Logo statt des Standard-Symbols oben in der Seitenleiste und als Fenstersymbol. "
-    "Empfohlen: quadratisches PNG.":
-        "Custom logo instead of the default icon at the top of the sidebar and as the window icon. "
-        "Recommended: square PNG.",
+    "Eigenes Logo statt der Buerklammer oben links in der Seitenleiste. Nur PNG, quadratisch empfohlen.":
+        "Custom logo instead of the paperclip icon at the top left of the sidebar. PNG only, square recommended.",
     "kein Logo": "no logo",
     "Logo waehlen": "Choose logo",
+    "Nur PNG-Dateien werden als Firmenlogo unterstuetzt.": "Only PNG files are supported as a company logo.",
     "Zuruecksetzen": "Reset",
     "Verbindung testen": "Test connection",
     "Speichern": "Save",
@@ -201,6 +200,13 @@ _EN: dict[str, str] = {
     "— keine —": "— none —",
     "CSV-Spalten zuordnen": "Map CSV columns",
     "Bestaetigen": "Confirm",
+
+    # --- PdfViewerDialog -------------------------------------------------
+    "PDF konnte nicht geladen werden.": "Could not load PDF.",
+    "Schliessen": "Close",
+    "Vorschau": "Preview",
+    "PDF wird geladen ...": "Loading PDF ...",
+    "PDF konnte nicht geladen werden: {error}": "Could not load PDF: {error}",
 
     # --- DocumentSearchDialog -------------------------------------------
     "Beleg aus Paperless waehlen": "Choose receipt from Paperless",

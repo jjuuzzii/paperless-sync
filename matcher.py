@@ -127,8 +127,8 @@ def fetch_and_prepare_paperless_docs(client, amount_detection: dict) -> list[dic
 
 def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> None:
     """Gleicht alle Transaktionen ab, die noch nicht manuell entschieden
-    wurden (tagged/uploaded bleiben unangetastet). Aendert die uebergebenen
-    Transaktions-Dicts in-place.
+    wurden (tagged/uploaded/matched bleiben unangetastet). Aendert die
+    uebergebenen Transaktions-Dicts in-place.
 
     Match-Regel: NUR der Betrag muss exakt uebereinstimmen (auf 2
     Nachkommastellen gerundet) - kein Zeitfenster/Datumsabgleich, Belege
@@ -140,8 +140,24 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> 
     candidates_pool = [d for d in paperless_docs if d["amount"] is not None]
     used_doc_ids = set()
 
+    # Bereits zugeordnete Dokumente (automatischer Match ODER manuell
+    # aufgeloester Mehrfach-Match aus einem frueheren Abgleich) gelten als
+    # "vergeben", noch BEVOR die eigentliche Zuordnungsschleife laeuft -
+    # sonst koennten sie bei einem erneuten Abgleich (z.B. nach neu
+    # hochgeladenen Belegen) einer ANDEREN, noch offenen Transaktion mit
+    # demselben Betrag angeboten werden.
     for tx in transactions:
-        if tx["status"] in ("tagged", "uploaded"):
+        if tx["status"] in ("tagged", "uploaded", "matched"):
+            for doc in tx.get("matched_docs") or []:
+                used_doc_ids.add(doc["id"])
+
+    for tx in transactions:
+        # "matched" bewusst mit ausgenommen: sonst wuerde ein erneuter
+        # Abgleich eine manuell aus mehreren Kandidaten aufgeloeste
+        # Zuordnung (siehe Controller.on_ambiguous_doc_selected) wieder
+        # verwerfen, sobald der Betrag weiterhin mehrfach vorkommt - was er
+        # bei einem echten Mehrfach-Match fast immer tut.
+        if tx["status"] in ("tagged", "uploaded", "matched"):
             continue
 
         candidates = [

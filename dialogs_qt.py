@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QBuffer, QByteArray, QIODevice
 from PySide6.QtGui import QIcon
+from PySide6.QtPdf import QPdfDocument
+from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -36,6 +38,9 @@ from i18n import tr, set_language, get_language
 
 
 def _apply_window_icon(window):
+    # Immer das mitgelieferte Standard-Icon - das hochgeladene Firmenlogo
+    # wird bewusst NUR in der Sidebar des Hauptfensters angezeigt (siehe
+    # DesktopAppQt._refresh_logo), nicht als Fenster-/Taskleisten-Icon.
     icon_path = get_resource_dir() / "icon.ico"
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
@@ -71,6 +76,59 @@ def _small_x_button() -> QPushButton:
         f"QPushButton:hover {{ color: #ff6b6b; }}"
     )
     return btn
+
+
+class PdfViewerDialog(QDialog):
+    """Zeigt einen Beleg (PDF-Bytes, egal ob von Paperless heruntergeladen
+    oder lokal hochgeladen) nativ eingebettet an (QtPdf/QPdfView) - damit
+    man beim Zuordnen/Pruefen nicht jedes Mal die Datei extern oeffnen
+    muss."""
+
+    def __init__(self, parent, pdf_bytes: bytes, title: str):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(820, 960)
+        self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
+        _apply_window_icon(self)
+
+        # QByteArray/QBuffer muessen als Attribute am Leben gehalten werden,
+        # solange das QPdfDocument daraus liest - anders als beim Laden von
+        # einer Datei raeumt Python sie sonst vorzeitig weg (Absturz-Risiko).
+        self._byte_array = QByteArray(pdf_bytes)
+        self._buffer = QBuffer(self._byte_array)
+        self._buffer.open(QIODevice.ReadOnly)
+
+        self.document = QPdfDocument(self)
+        self.document.load(self._buffer)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        if self.document.status() != QPdfDocument.Status.Ready:
+            error_lbl = QLabel(tr("PDF konnte nicht geladen werden."))
+            error_lbl.setStyleSheet(f"color: {COLORS['red']}; padding: 24px;")
+            error_lbl.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_lbl, stretch=1)
+        else:
+            self.view = QPdfView(self)
+            self.view.setDocument(self.document)
+            self.view.setPageMode(QPdfView.PageMode.MultiPage)
+            self.view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+            layout.addWidget(self.view, stretch=1)
+
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(12, 8, 12, 12)
+        close_row.addStretch()
+        close_btn = QPushButton(tr("Schliessen"))
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {COLORS['bg_card']}; color: {COLORS['text_primary']}; "
+            f"border-radius: 10px; padding: 8px 18px; }}"
+            f"QPushButton:hover {{ background-color: {COLORS['bg_card_hover']}; }}"
+        )
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        layout.addLayout(close_row)
 
 
 class SettingsDialog(QDialog):
@@ -247,10 +305,7 @@ class SettingsDialog(QDialog):
 
         logo_card = self._section(
             tr("Firmenlogo"),
-            tr(
-                "Eigenes Logo statt des Standard-Symbols oben in der Seitenleiste und als Fenstersymbol. "
-                "Empfohlen: quadratisches PNG."
-            ),
+            tr("Eigenes Logo statt der Buerklammer oben links in der Seitenleiste. Nur PNG, quadratisch empfohlen."),
         )
         self._selected_logo_file = None
         self._logo_removed = False
@@ -453,9 +508,7 @@ class SettingsDialog(QDialog):
             self.cert_label.setText(Path(path).name)
 
     def _pick_logo(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, tr("Logo waehlen"), "", "Bilder (*.png *.ico *.jpg *.jpeg);;Alle Dateien (*)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, tr("Logo waehlen"), "", "PNG (*.png)")
         if path:
             self._selected_logo_file = path
             self._logo_removed = False
@@ -612,8 +665,15 @@ class SettingsDialog(QDialog):
         state.config["paperless_success_tag_name"] = self.paperless_tag_name_entry.text().strip() or "Abgeglichen"
 
         if self._selected_logo_file:
-            ext = Path(self._selected_logo_file).suffix or ".png"
-            logo_dest = state.base_dir / f"company_icon{ext}"
+            # Nur PNG zulassen (Transparenz, kein Kompressionsartefakt-Risiko
+            # bei der kleinen Darstellung in Sidebar/Titelleiste/Taskleiste) -
+            # der Datei-Dialog filtert bereits auf *.png, hier zusaetzlich
+            # defensiv geprueft, falls doch ein anderer Dateiname eingetippt wurde.
+            if Path(self._selected_logo_file).suffix.lower() != ".png":
+                self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+                self.status_label.setText(tr("Nur PNG-Dateien werden als Firmenlogo unterstuetzt."))
+                return
+            logo_dest = state.base_dir / "company_icon.png"
             logo_dest.write_bytes(Path(self._selected_logo_file).read_bytes())
             state.config["company_icon_path"] = logo_dest.name
         elif self._logo_removed:
@@ -721,7 +781,10 @@ class DocumentSearchDialog(QDialog):
     nachzutragen (bei Mehrfachauswahl nicht sinnvoll, da kein einzelner
     Wert eindeutig waere)."""
 
-    def __init__(self, parent, docs: list[dict], already_linked_ids: set[int], show_value_entry: bool, default_value: str, on_confirm):
+    def __init__(
+        self, parent, docs: list[dict], already_linked_ids: set[int], show_value_entry: bool, default_value: str,
+        on_confirm, on_preview=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(tr("Beleg aus Paperless waehlen"))
         self.resize(640, 580)
@@ -733,6 +796,7 @@ class DocumentSearchDialog(QDialog):
         self.show_value_entry = show_value_entry
         self.default_value = default_value
         self.on_confirm = on_confirm
+        self.on_preview = on_preview
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -770,6 +834,15 @@ class DocumentSearchDialog(QDialog):
         layout.addWidget(self.value_entry)
 
         btn_row = QHBoxLayout()
+        if self.on_preview is not None:
+            self.preview_btn = QPushButton(f"👁 {tr('Vorschau')}")
+            self.preview_btn.setEnabled(False)
+            self.preview_btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {COLORS['blue']}; padding: 8px 16px; }}"
+                f"QPushButton:disabled {{ color: {COLORS['text_muted']}; }}"
+            )
+            self.preview_btn.clicked.connect(self._preview)
+            btn_row.addWidget(self.preview_btn)
         btn_row.addStretch()
         cancel_btn = QPushButton(tr("Abbrechen"))
         cancel_btn.setStyleSheet(
@@ -819,11 +892,18 @@ class DocumentSearchDialog(QDialog):
     def _on_selection_changed(self):
         selected = self._selected_docs()
         self.confirm_btn.setEnabled(bool(selected))
+        if self.on_preview is not None:
+            self.preview_btn.setEnabled(len(selected) == 1)
         show_entry = self.show_value_entry and len(selected) == 1 and selected[0].get("amount") is None
         self.value_label.setVisible(show_entry)
         self.value_entry.setVisible(show_entry)
         if show_entry and not self.value_entry.text():
             self.value_entry.setText(self.default_value)
+
+    def _preview(self):
+        selected = self._selected_docs()
+        if len(selected) == 1 and self.on_preview is not None:
+            self.on_preview(selected[0])
 
     def _confirm(self):
         selected = self._selected_docs()
@@ -831,5 +911,4 @@ class DocumentSearchDialog(QDialog):
             return
         value = self.value_entry.text().strip() if self.value_entry.isVisible() and self.value_entry.text().strip() else None
         self.on_confirm([doc["id"] for doc in selected], value)
-        self.accept()
         self.accept()

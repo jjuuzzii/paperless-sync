@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from desktop_state import AppState
 from desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
-from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog
+from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
 from config_manager import get_resource_dir
 from theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
 from i18n import tr, set_language
@@ -134,6 +134,28 @@ class MatchWorker(QObject):
             self.finished.emit(None, str(exc))
         else:
             self.finished.emit(count, None)
+
+
+class DocDownloadWorker(QObject):
+    """Laedt EIN Paperless-Dokument (PDF-Bytes) im Hintergrund - fuer den
+    PDF-Viewer (siehe PdfViewerDialog). Gleiches Freeze-Risiko/Muster wie
+    MatchWorker: ein synchroner Download im UI-Thread wuerde bei einer
+    langsamen Verbindung die Oberflaeche einfrieren lassen."""
+
+    finished = Signal(object, object)  # (pdf_bytes, error_message) - genau eines von beiden ist None
+
+    def __init__(self, client, doc_id: int):
+        super().__init__()
+        self.client = client
+        self.doc_id = doc_id
+
+    def run(self):
+        try:
+            pdf_bytes = self.client.download_document(self.doc_id)
+        except Exception as exc:
+            self.finished.emit(None, str(exc))
+        else:
+            self.finished.emit(pdf_bytes, None)
 
 
 class CardFrame(QFrame):
@@ -268,11 +290,10 @@ class DesktopAppQt(QMainWindow):
 
     # ------------------------------------------------------------------
     def _set_app_icon(self):
-        # Ein hochgeladenes Firmenlogo (siehe SettingsDialog) ersetzt das
-        # mitgelieferte Standard-Icon als Fenster-/Taskleisten-Symbol, falls
-        # vorhanden - sonst Fallback auf icon.ico.
-        custom_path = self._custom_icon_path()
-        icon_path = custom_path if custom_path and custom_path.exists() else get_resource_dir() / "icon.ico"
+        # Immer das mitgelieferte Standard-Icon fuer Fenster-/Taskleiste -
+        # das hochgeladene Firmenlogo (siehe SettingsDialog) wird bewusst
+        # NUR in der Sidebar angezeigt (siehe _refresh_logo), nicht hier.
+        icon_path = get_resource_dir() / "icon.ico"
         if icon_path.exists():
             # QIcon liest ALLE eingebetteten Groessen aus der .ico selbst
             # und waehlt je nach Kontext (Titelleiste/Taskleiste) die
@@ -283,6 +304,23 @@ class DesktopAppQt(QMainWindow):
     def _custom_icon_path(self):
         name = self.app_state.config.get("company_icon_path")
         return (self.app_state.base_dir / name) if name else None
+
+    def _refresh_logo(self):
+        """Aktualisiert das Logo oben links in der Sidebar (Buerklammer-Text
+        oder hochgeladenes Firmenlogo als Bild) anhand des aktuellen
+        company_icon_path - separat von render() aufrufbar (siehe
+        _on_settings_saved), damit ein frisch hochgeladenes Logo sofort
+        sichtbar wird statt erst nach einem Neustart. Ruehrt bewusst NICHT
+        an das Fenster-/Taskleisten-Icon (siehe _set_app_icon)."""
+        logo_path = self._custom_icon_path()
+        pixmap = QPixmap(str(logo_path)) if logo_path and logo_path.exists() else None
+        if pixmap and not pixmap.isNull():
+            self.logo_lbl.setText("")
+            self.logo_lbl.setPixmap(pixmap.scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.logo_lbl.setPixmap(QPixmap())
+            self.logo_lbl.setText("📎")
+            self.logo_lbl.setFont(qfont(18))
 
     # ------------------------------------------------------------------
     # Sidebar
@@ -297,8 +335,18 @@ class DesktopAppQt(QMainWindow):
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+
+        # Logo-Platz ganz links: Standardmaessig die Buerklammer als Text
+        # (kein Bild - siehe _refresh_logo), ersetzt durch das hochgeladene
+        # Firmenlogo, sobald eines hinterlegt ist.
+        self.logo_lbl = QLabel()
+        self.logo_lbl.setFixedSize(28, 28)
+        self.logo_lbl.setAlignment(Qt.AlignCenter)
+        title_row.addWidget(self.logo_lbl, alignment=Qt.AlignTop)
+
         title_col = QVBoxLayout()
-        title = QLabel("📎 Paperless Sync")
+        title = QLabel("Paperless Sync")
         title.setFont(qfont(16, bold=True))
         title.setStyleSheet(f"color: {COLORS['text_primary']}; border: none;")
         title_col.addWidget(title)
@@ -307,21 +355,6 @@ class DesktopAppQt(QMainWindow):
         company.setStyleSheet(f"color: {COLORS['text_muted']}; border: none;")
         title_col.addWidget(company)
         title_row.addLayout(title_col, stretch=1)
-
-        # Firmenlogo (siehe SettingsDialog-Upload) oben rechts in der
-        # Sidebar, sofern eines hinterlegt ist - sonst bleibt die Zeile
-        # einspaltig (kein Platzhalter-Icon, um bei fehlendem Logo keine
-        # unnoetige Leerflaeche zu erzeugen).
-        logo_path = self._custom_icon_path()
-        if logo_path and logo_path.exists():
-            logo_lbl = QLabel()
-            pixmap = QPixmap(str(logo_path))
-            if not pixmap.isNull():
-                logo_lbl.setPixmap(
-                    pixmap.scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-                logo_lbl.setAlignment(Qt.AlignTop | Qt.AlignRight)
-                title_row.addWidget(logo_lbl, alignment=Qt.AlignTop)
         layout.addLayout(title_row)
         layout.addSpacing(20)
 
@@ -382,6 +415,7 @@ class DesktopAppQt(QMainWindow):
         export_btn.clicked.connect(self._on_generate_export_click)
         layout.addWidget(export_btn)
 
+        self._refresh_logo()
         root_layout.addWidget(sidebar)
 
     def _section_label(self, text: str) -> QLabel:
@@ -664,6 +698,14 @@ class DesktopAppQt(QMainWindow):
             bottom.addWidget(self._pill(label, COLORS["green"], COLORS["green_dim"]))
         elif tx["status"] == "uploaded":
             bottom.addWidget(self._pill(f"📤 {tr('Hochgeladen')}", COLORS["blue"], COLORS["blue_dim"]))
+            view_btn = QPushButton(f"👁 {tr('Vorschau')}")
+            view_btn.setCursor(Qt.PointingHandCursor)
+            view_btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {COLORS['blue']}; border: none; font-size: 8pt; }}"
+                f"QPushButton:hover {{ color: #4a76d6; }}"
+            )
+            view_btn.clicked.connect(lambda _=False, t=tx: self._view_uploaded_pdf(t))
+            bottom.addWidget(view_btn)
         else:
             tag = tx.get("tag") or "SONSTIGES"
             icon = TAG_ICONS.get(tag, "🏷️")
@@ -707,6 +749,16 @@ class DesktopAppQt(QMainWindow):
             name_lbl = QLabel(f"📄 {name}")
             name_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 8pt; border: none;")
             chip_layout.addWidget(name_lbl)
+            view_btn = QPushButton("👁")
+            view_btn.setFixedSize(18, 16)
+            view_btn.setCursor(Qt.PointingHandCursor)
+            view_btn.setToolTip(tr("Vorschau"))
+            view_btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {COLORS['blue']}; border: none; font-size: 8pt; }}"
+                f"QPushButton:hover {{ color: #4a76d6; }}"
+            )
+            view_btn.clicked.connect(lambda _=False, d=doc: self._view_paperless_doc(d))
+            chip_layout.addWidget(view_btn)
             remove_btn = QPushButton("✕")
             remove_btn.setFixedSize(16, 16)
             remove_btn.setCursor(Qt.PointingHandCursor)
@@ -979,6 +1031,7 @@ class DesktopAppQt(QMainWindow):
             show_value_entry,
             default_value,
             lambda doc_ids, value, t=tx: self._on_docs_selected(t["id"], doc_ids, value),
+            on_preview=self._view_paperless_doc,
         )
         dlg.exec()
 
@@ -993,6 +1046,58 @@ class DesktopAppQt(QMainWindow):
     def _on_remove_doc_click(self, tx_id, doc_id):
         self.controller.on_remove_doc(tx_id, doc_id)
         self._refresh_single_transaction(tx_id)
+
+    def _open_pdf_viewer(self, pdf_bytes: bytes, title: str):
+        dlg = PdfViewerDialog(self, pdf_bytes, title)
+        dlg.exec()
+
+    def _view_uploaded_pdf(self, tx: dict):
+        pdf_bytes = tx.get("uploaded_bytes")
+        if not pdf_bytes:
+            return
+        self._open_pdf_viewer(pdf_bytes, tx.get("uploaded_name") or tr("Beleg"))
+
+    def _view_paperless_doc(self, doc: dict):
+        """Laedt ein bereits verknuepftes Paperless-Dokument im Hintergrund
+        (siehe DocDownloadWorker) und zeigt es im PDF-Viewer an - gleiches
+        Freeze-Vermeidungs-Muster wie beim Abgleich (MatchWorker)."""
+        if not self.app_state.client:
+            return
+        if getattr(self, "_doc_dl_thread", None) is not None and self._doc_dl_thread.isRunning():
+            return
+        title = doc.get("original_file_name") or doc.get("title") or f"#{doc['id']}"
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._doc_dl_result = None
+        self._doc_dl_thread = QThread()
+        self._doc_dl_worker = DocDownloadWorker(self.app_state.client, doc["id"])
+        self._doc_dl_worker.moveToThread(self._doc_dl_thread)
+        self._doc_dl_thread.started.connect(self._doc_dl_worker.run)
+        self._doc_dl_worker.finished.connect(lambda pdf_bytes, error, t=title: self._stash_doc_download(pdf_bytes, error, t))
+        self._doc_dl_worker.finished.connect(self._doc_dl_thread.quit)
+        # Das QPdfView/QPdfDocument fuer den Viewer erst NACH thread.finished
+        # erzeugen (nicht schon im worker.finished-Slot, auch nicht nur um
+        # einen QTimer.singleShot(0)-Tick verzoegert - beides reichte nicht
+        # zuverlaessig aus) - thread.finished feuert erst, wenn die
+        # Event-Loop des Worker-Threads tatsaechlich beendet ist. Vorher
+        # QPdfView zu erzeugen fuehrte reproduzierbar (wenn auch nicht bei
+        # jedem Versuch - reine Race Condition) zu "QObject::setParent:
+        # Cannot set parent, new parent is in a different thread" und
+        # einem Segfault kurz danach, vermutlich ein Konflikt mit QPdfViews
+        # eigenem internen Rendering-Thread-Pool waehrend der
+        # Worker-Thread noch nicht vollstaendig heruntergefahren ist.
+        self._doc_dl_thread.finished.connect(self._on_doc_thread_finished)
+        self._doc_dl_thread.start()
+
+    def _stash_doc_download(self, pdf_bytes, error, title):
+        self._doc_dl_result = (pdf_bytes, error, title)
+
+    def _on_doc_thread_finished(self):
+        QApplication.restoreOverrideCursor()
+        pdf_bytes, error, title = self._doc_dl_result
+        if error:
+            QMessageBox.critical(self, tr("Fehlgeschlagen"), error)
+            return
+        self._open_pdf_viewer(pdf_bytes, title)
 
     def _get_custom_field_data_type(self):
         if self._custom_fields_cache is None:
@@ -1018,6 +1123,7 @@ class DesktopAppQt(QMainWindow):
         # per reload_env_and_client() neu aufgebaut - hier nur noch pruefen
         # und neu rendern.
         self._refresh_connection_status()
+        self._refresh_logo()
         self.render()
 
     def _on_upload_csv_click(self):
@@ -1133,6 +1239,10 @@ class DesktopAppQt(QMainWindow):
             # warten, bevor der Thread zerstoert wird.
             match_thread.quit()
             match_thread.wait(35000)
+        doc_dl_thread = getattr(self, "_doc_dl_thread", None)
+        if doc_dl_thread is not None and doc_dl_thread.isRunning():
+            doc_dl_thread.quit()
+            doc_dl_thread.wait(15000)
         self.app_state.persist_session()
         super().closeEvent(event)
 
