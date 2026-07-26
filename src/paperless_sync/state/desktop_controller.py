@@ -7,6 +7,7 @@ render()-Methode erneut auf - der Controller kennt kein Tkinter-Widget."""
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from paperless_sync.core.csv_utils import read_csv_raw
@@ -98,6 +99,28 @@ class Controller:
         state.config["csv_mappings"][col_sig] = mapping
         state.save_config()
         state.transactions = build_transactions(state.csv_df, mapping)
+        self.suggest_learned_tags()
+        state.matched_once = False
+        state.persist_session()
+
+    def on_external_import(self, df, mapping: dict) -> None:
+        """Importiert Transaktionen aus einem bereits fertigen DataFrame mit
+        bekanntem Spalten-Mapping - identisch zu on_mapping_confirm(), nur
+        ohne den Umweg ueber eine hochgeladene CSV-Datei (kein
+        csv_columns/Datei-Signatur-Konzept anwendbar, das Mapping wird auch
+        NICHT in config['csv_mappings'] gemerkt, da es sich nicht auf ein
+        wiederkehrendes CSV-Spaltenlayout bezieht). Fuer jede Datenquelle
+        nutzbar, die dieselbe Tabellenform wie eine Bank-CSV liefert (Datum/
+        Betrag/Verwendungszweck/[Gegenpartei])."""
+        state = self.state
+        state.csv_df = df
+        state.csv_columns = list(df.columns)
+        state.csv_signature = f"external_{len(df)}_{datetime.now().isoformat()}"
+        state.csv_delimiter = ","
+        state.csv_encoding = "utf-8"
+        state.pending_mapping = mapping
+        state.mapping_confirmed = True
+        state.transactions = build_transactions(df, mapping)
         self.suggest_learned_tags()
         state.matched_once = False
         state.persist_session()

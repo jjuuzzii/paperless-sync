@@ -152,6 +152,38 @@ class MatchWorker(QObject):
             self.finished.emit(count, None)
 
 
+class _BankAuthWorker(QObject):
+    """Persoenliche, nicht-oeffentliche Erweiterung (siehe Import am
+    Dateianfang) - fuehrt authorize_and_create_session() in einem eigenen
+    Thread aus, da der Aufruf bis zu 5 Minuten auf den Bank-Login im
+    Browser wartet (gleiches Muster wie MatchWorker/ConnectionCheckWorker,
+    sonst friert die UI fuer die gesamte Wartezeit ein). Lazy-Import der
+    privaten enable_banking_client innerhalb run() - diese Klasse wird nur
+    instanziiert, wenn ENABLE_BANKING_AVAILABLE bereits True ist, aber der
+    Modul-Import selbst bleibt trotzdem auf den tatsaechlichen
+    Verwendungszeitpunkt beschraenkt."""
+
+    finished = Signal(object, object)  # (session_dict, error_message)
+
+    def __init__(self, client, aspsp_name, aspsp_country):
+        super().__init__()
+        self.client = client
+        self.aspsp_name = aspsp_name
+        self.aspsp_country = aspsp_country
+
+    def run(self):
+        from paperless_sync.core.enable_banking_client import authorize_and_create_session, EnableBankingError
+
+        try:
+            session = authorize_and_create_session(self.client, self.aspsp_name, self.aspsp_country)
+        except EnableBankingError as exc:
+            self.finished.emit(None, str(exc))
+        except Exception as exc:
+            self.finished.emit(None, str(exc))
+        else:
+            self.finished.emit(session, None)
+
+
 class DocDownloadWorker(QObject):
     """Laedt EIN Paperless-Dokument (PDF-Bytes) im Hintergrund - fuer den
     PDF-Viewer (siehe PdfViewerDialog). Gleiches Freeze-Risiko/Muster wie
@@ -1180,18 +1212,123 @@ class DesktopAppQt(QMainWindow):
 
     def _on_bank_import_click(self):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
-        Dateianfang. Bewusst noch ein Platzhalter: der volle Ablauf
-        (Bank-Auswahl, Weiterleitung zum Bank-Login, Rueckgabe des
-        Autorisierungs-Codes ueber redirect_url) braucht noch eine
-        Design-Entscheidung, WIE der Code nach dem Redirect zurueck in die
-        App kommt (lokaler HTTP-Listener vs. manuelles Einfuegen) - siehe
-        Chat."""
+        Dateianfang. Ablauf: Application ID einmalig abfragen (danach ueber
+        secrets_manager gemerkt), Land + Bank waehlen, dann im
+        Hintergrund-Thread (_BankAuthWorker) automatisch per lokalem
+        HTTP-Listener auf den Bank-Login-Redirect warten (siehe
+        enable_banking_client.authorize_and_create_session) - kein
+        manuelles Einfuegen eines Codes noetig."""
+        from paperless_sync.core import secrets_manager
+        from paperless_sync.core.enable_banking_client import EnableBankingClient, EnableBankingError
+
+        application_id = secrets_manager.get_secret(self.app_state.base_dir, "enable_banking_application_id")
+        if not application_id:
+            application_id, ok = QInputDialog.getText(
+                self, tr("Enable Banking"), tr("Application ID (einmalig, wird sicher gespeichert):")
+            )
+            if not ok or not application_id.strip():
+                return
+            application_id = application_id.strip()
+            try:
+                secrets_manager.set_secret(self.app_state.base_dir, "enable_banking_application_id", application_id)
+            except secrets_manager.SecretsLockedError:
+                QMessageBox.warning(
+                    self, tr("Gesperrt"), tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig).")
+                )
+                return
+
+        country, ok = QInputDialog.getText(self, tr("Land"), tr("Laendercode (z.B. AT, DE):"))
+        if not ok or not country.strip():
+            return
+        country = country.strip().upper()
+
+        try:
+            client = EnableBankingClient(application_id=application_id)
+            aspsps = client.get_aspsps(country)
+        except EnableBankingError as exc:
+            QMessageBox.critical(self, tr("Fehler"), str(exc))
+            return
+
+        if not aspsps:
+            QMessageBox.information(
+                self, tr("Keine Banken gefunden"), tr("Fuer {country} wurden keine Banken gefunden.", country=country)
+            )
+            return
+
+        names = [a.get("name", "?") for a in aspsps]
+        bank_name, ok = QInputDialog.getItem(self, tr("Bank waehlen"), tr("Bank:"), names, editable=False)
+        if not ok:
+            return
+
+        self._bank_import_client = client
+        self._bank_import_thread = QThread()
+        self._bank_import_worker = _BankAuthWorker(client, bank_name, country)
+        self._bank_import_worker.moveToThread(self._bank_import_thread)
+        self._bank_import_thread.started.connect(self._bank_import_worker.run)
+        self._bank_import_worker.finished.connect(self._on_bank_auth_finished)
+        self._bank_import_worker.finished.connect(self._bank_import_thread.quit)
         QMessageBox.information(
             self,
-            tr("Von Bank importieren"),
-            "Enable-Banking-Anbindung ist vorbereitet (Client, Datenformat-Adapter), "
-            "der Autorisierungs-Ablauf in der UI fehlt noch.",
+            tr("Bank-Login"),
+            tr(
+                "Der Standard-Browser oeffnet sich jetzt fuer den Bank-Login. Nach erfolgreichem Login "
+                "kehrt diese App automatisch zurueck (bis zu 5 Minuten Zeit)."
+            ),
         )
+        self._bank_import_thread.start()
+
+    def _on_bank_auth_finished(self, session, error):
+        """Persoenliche, nicht-oeffentliche Erweiterung - siehe
+        _on_bank_import_click. Zeigt die abgerufenen Buchungen VOR der
+        Uebernahme (Anforderung aus dem Chat: erst pruefen, dann in die
+        Matching-Pipeline einspeisen, keine automatische Uebernahme ohne
+        Bestaetigung)."""
+        if error:
+            QMessageBox.critical(self, tr("Autorisierung fehlgeschlagen"), error)
+            return
+        accounts = session.get("accounts") or []
+        if not accounts:
+            QMessageBox.information(self, tr("Keine Konten"), tr("Keine autorisierten Konten in der Session gefunden."))
+            return
+
+        labels = [a.get("uid", str(i)) for i, a in enumerate(accounts)]
+        account_uid, ok = QInputDialog.getItem(self, tr("Konto waehlen"), tr("Konto:"), labels, editable=False)
+        if not ok:
+            return
+
+        from paperless_sync.core.enable_banking_client import (
+            EnableBankingError,
+            transactions_to_dataframe,
+            ENABLE_BANKING_MAPPING,
+        )
+
+        try:
+            raw_txs = self._bank_import_client.get_transactions(account_uid)
+        except EnableBankingError as exc:
+            QMessageBox.critical(self, tr("Fehler"), str(exc))
+            return
+
+        if not raw_txs:
+            QMessageBox.information(self, tr("Keine Buchungen"), tr("Keine Kontobewegungen erhalten."))
+            return
+
+        df = transactions_to_dataframe(raw_txs)
+        preview = df.head(20).to_string(index=False)
+        confirm = QMessageBox.question(
+            self,
+            tr("Buchungen importieren"),
+            tr(
+                "{count} Buchungen erhalten. Erste Zeilen:\n\n{preview}\n\nJetzt in die App uebernehmen?",
+                count=len(df),
+                preview=preview,
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
+        self.render()
 
     def _on_mapping_confirmed(self, date_col, amount_col, purpose_col, counterparty_col=None):
         try:
