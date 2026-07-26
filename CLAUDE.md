@@ -20,6 +20,9 @@ Paperless Sync ist ein Windows-Desktop-Tool (PySide6/Qt), das Banktransaktionen 
 | `src/paperless_sync/core/exporter.py` | Erzeugt den monatlichen Export-Ordner für den Steuerberater |
 | `src/paperless_sync/core/csv_utils.py` | Encoding-/Trennzeichen-/Betrag-/Datums-Parsing |
 | `src/paperless_sync/core/config_manager.py` | Lädt/speichert `.env` und `config.json` |
+| `src/paperless_sync/core/secrets_manager.py` | Verwaltet Zugangsdaten/Session-Schlüssel (OS-Keyring oder Passphrasen-Fallback) |
+| `src/paperless_sync/core/credential_store.py` | Dünner Wrapper um das keyring-Paket |
+| `src/paperless_sync/core/encrypted_fallback.py` | Passphrasen-basierte Fernet-Verschlüsselung, falls kein Keyring verfügbar ist |
 | `src/paperless_sync/core/backup.py` | ZIP-Backup/-Restore aller Nutzerdaten |
 | `src/paperless_sync/core/i18n.py` | Minimale DE/EN-Übersetzung der Oberfläche |
 | `src/paperless_sync/core/tx_status.py` | Zentrale Transaktions-Status-Werte (siehe unten) |

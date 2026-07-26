@@ -21,6 +21,7 @@ from paperless_sync.core.config_manager import (
 from .session_store import save_session, load_session
 from paperless_sync.core.paperless_client import PaperlessClient
 from paperless_sync.core.tx_status import TxStatus, OPEN_STATUSES, DONE_STATUSES
+from paperless_sync.core import secrets_manager
 
 # Alte, vor Einfuehrung von TxStatus persistierte Sitzungen kennen den
 # Status noch als losen String (oder None) statt als TxStatus-Member -
@@ -35,7 +36,13 @@ _LEGACY_STATUS_MAP = {
 
 
 class AppState:
-    def __init__(self):
+    def __init__(self, passphrase: str | None = None):
+        """passphrase: nur noetig, wenn secrets_manager.has_locked_secrets()
+        True ist (kein OS-Keyring verfuegbar, Zugangsdaten/Session-Schluessel
+        liegen im Passphrasen-Fallback) - im ueblichen Fall (Keyring
+        vorhanden) bleibt das None und aendert nichts am bisherigen
+        Verhalten. Die UI muss has_locked_secrets() VOR dem Erzeugen von
+        AppState() pruefen und ggf. eine Passphrase abfragen."""
         self.base_dir = get_base_dir()
         seed_default_files(self.base_dir, get_resource_dir())
 
@@ -46,8 +53,13 @@ class AppState:
         self.input_dir.mkdir(exist_ok=True)
         self.export_dir.mkdir(exist_ok=True)
 
-        self.env = load_env(self.base_dir)
+        self.env = load_env(self.base_dir, passphrase=passphrase)
         self.config = load_config(self.config_path)
+        # Verschluesselt session_state.json (siehe session_store.py) - None,
+        # wenn der Fallback-Speicher gesperrt ist (kein Keyring, keine/
+        # falsche Passphrase); persist_session()/_restore_session() lassen
+        # die Sitzung dann bewusst unangetastet statt Klartext zu schreiben.
+        self._session_key = secrets_manager.get_or_create_session_key(self.base_dir, passphrase=passphrase)
 
         self.csv_df = None
         self.csv_columns: list[str] = []
@@ -103,8 +115,8 @@ class AppState:
         except Exception:
             return None
 
-    def reload_env_and_client(self):
-        self.env = load_env(self.base_dir)
+    def reload_env_and_client(self, passphrase: str | None = None):
+        self.env = load_env(self.base_dir, passphrase=passphrase)
         self.client = self._build_client()
 
     def save_config(self):
@@ -122,15 +134,24 @@ class AppState:
                 return path
         return self.export_dir
 
-    def save_env(self, values: dict):
-        save_env(self.base_dir, values)
-        self.reload_env_and_client()
+    def save_env(self, values: dict, passphrase: str | None = None):
+        save_env(self.base_dir, values, passphrase=passphrase)
+        self.reload_env_and_client(passphrase=passphrase)
+
+    def has_locked_secrets(self) -> bool:
+        """True, wenn Zugangsdaten/Session-Schluessel im Passphrasen-Fallback
+        liegen (kein OS-Keyring) und noch (oder wieder) gesperrt sind - die
+        UI sollte in diesem Fall eine Passphrase abfragen, bevor Zugangsdaten
+        gespeichert werden oder eine bestehende Sitzung erwartet wird."""
+        return secrets_manager.has_locked_secrets(self.base_dir)
 
     # --- Sitzung wiederherstellen/speichern ------------------------------------------------
     def _restore_session(self):
         if not self.is_configured():
             return
-        restored = load_session(self.base_dir)
+        if self._session_key is None:
+            return
+        restored = load_session(self.base_dir, fernet_key=self._session_key)
         if not restored:
             return
         self.csv_signature = restored.get("csv_signature")
@@ -226,6 +247,13 @@ class AppState:
     def persist_session(self) -> None:
         if not self.transactions:
             return
+        if self._session_key is None:
+            # Fallback-Speicher gesperrt (kein Keyring, keine/falsche
+            # Passphrase) - lieber nicht persistieren als Klartext zu
+            # schreiben. Bereits geleistete Arbeit bleibt in dieser
+            # Sitzung im Speicher erhalten, nur der Neustart-Schutz fehlt
+            # voruebergehend.
+            return
         save_session(
             self.base_dir,
             {
@@ -239,6 +267,7 @@ class AppState:
                 "matched_once": self.matched_once,
                 "transactions": self.transactions,
             },
+            fernet_key=self._session_key,
         )
 
     # --- Abgeleitete Ansichten fuer die UI ------------------------------------------------

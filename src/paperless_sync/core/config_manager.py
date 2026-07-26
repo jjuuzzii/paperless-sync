@@ -17,6 +17,12 @@ Bei PyInstaller (onedir, ab v6) landen gebuendelte Datendateien in einem
 mitgelieferten DEFAULT-Vorlagen (leeres config.json/.env, Beispiel-CSV,
 icon.ico) - seed_default_files() kopiert sie beim allerersten Start nach
 get_base_dir(), falls dort noch nichts existiert.
+
+PAPERLESS_TOKEN und PAPERLESS_CLIENT_CERT_PASSWORD stehen NICHT in .env
+(auch nicht verschluesselt) - die werden ueber secrets_manager.py verwaltet
+(OS-Keyring oder Passphrasen-Fallback). load_env()/save_env() migrieren
+Klartext-Werte aus .env-Dateien von vor dieser Umstellung automatisch beim
+ersten Laden.
 """
 from __future__ import annotations
 
@@ -28,6 +34,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from platformdirs import user_data_dir
+
+from . import secrets_manager
 
 PLACEHOLDER_TOKEN = "your_paperless_api_token_here"
 
@@ -125,45 +133,110 @@ def seed_default_files(base_dir: Path, resource_dir: Path) -> None:
         shutil.copy(example_src, example_dst)
 
 
-def load_env(base_dir: Path) -> dict:
+def _strip_env_key(base_dir: Path, key: str) -> None:
+    """Entfernt eine einzelne Zeile aus .env, alle anderen bleiben
+    unangetastet - genutzt, um einen Klartext-Secret-Wert nach der
+    Migration in secrets_manager (Keyring/Passphrasen-Fallback) aus der
+    Datei zu tilgen."""
+    env_path = base_dir / ".env"
+    if not env_path.exists():
+        return
+    existing = dict(dotenv_values(env_path))
+    if key not in existing:
+        return
+    existing.pop(key)
+    with open(env_path, "w", encoding="utf-8") as f:
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
+
+
+def _resolve_secret(base_dir: Path, raw_env: dict, plain_key: str, secret_name: str, passphrase: str | None) -> str:
+    """Liest ein Secret (Paperless-Token/Zertifikat-Passwort) ueber
+    secrets_manager (Keyring oder Passphrasen-Fallback). Findet sich dort
+    NICHTS, aber noch ein Klartext-Wert aus einer .env von vor dieser
+    Umstellung, wird er einmalig automatisch migriert (sicher gespeichert,
+    dann aus .env entfernt) - ist der Fallback-Speicher gerade gesperrt
+    (kein Keyring, keine Passphrase), bleibt der Klartext-Wert vorerst
+    UNVERAENDERT nutzbar (die App funktioniert weiter), die Migration
+    passiert beim naechsten Aufruf mit Passphrase."""
+    stored = secrets_manager.get_secret(base_dir, secret_name, passphrase=passphrase)
+    if stored:
+        return stored
+
+    plain_value = raw_env.get(plain_key) or ""
+    if not plain_value or plain_value == PLACEHOLDER_TOKEN:
+        return plain_value
+
+    try:
+        secrets_manager.set_secret(base_dir, secret_name, plain_value, passphrase=passphrase)
+    except secrets_manager.SecretsLockedError:
+        return plain_value
+    _strip_env_key(base_dir, plain_key)
+    return plain_value
+
+
+def load_env(base_dir: Path, passphrase: str | None = None) -> dict:
     """Liest PAPERLESS_URL, PAPERLESS_TOKEN, COMPANY_NAME aus der .env.
+    PAPERLESS_TOKEN und PAPERLESS_CLIENT_CERT_PASSWORD kommen NICHT mehr
+    aus der .env selbst, sondern ueber secrets_manager (OS-Keyring oder
+    Passphrasen-Fallback, siehe dort) - siehe _resolve_secret fuer die
+    automatische Migration alter Klartext-.env-Dateien.
 
     Fehlt die .env oder einzelne Werte, wird ein leerer String zurueckgegeben,
     damit die App auch ohne vollstaendige Konfiguration startet (nur mit
     eingeschraenkter Funktionalitaet, siehe README).
     """
     env_path = base_dir / ".env"
-    values = dotenv_values(env_path) if env_path.exists() else {}
+    raw = dict(dotenv_values(env_path)) if env_path.exists() else {}
 
     def _get(key):
-        return values.get(key) or os.environ.get(key) or ""
+        return raw.get(key) or os.environ.get(key) or ""
 
     return {
         "PAPERLESS_URL": _get("PAPERLESS_URL").rstrip("/"),
-        "PAPERLESS_TOKEN": _get("PAPERLESS_TOKEN"),
+        "PAPERLESS_TOKEN": _resolve_secret(base_dir, raw, "PAPERLESS_TOKEN", secrets_manager.SECRET_TOKEN, passphrase),
         "COMPANY_NAME": _get("COMPANY_NAME"),
         # Optional: PKCS#12-Client-Zertifikat fuer mTLS-geschuetzte URLs (z.B.
         # Cloudflare Access). Pfad ist relativ zu get_base_dir() gespeichert,
         # damit er in Quellcode- und exe-Betrieb gleichermassen funktioniert.
+        # Nur der Pfad steht in .env, das Zertifikat-Passwort selbst kommt
+        # (wie PAPERLESS_TOKEN) aus secrets_manager.
         "PAPERLESS_CLIENT_CERT_PATH": _get("PAPERLESS_CLIENT_CERT_PATH"),
-        "PAPERLESS_CLIENT_CERT_PASSWORD": _get("PAPERLESS_CLIENT_CERT_PASSWORD"),
+        "PAPERLESS_CLIENT_CERT_PASSWORD": _resolve_secret(
+            base_dir, raw, "PAPERLESS_CLIENT_CERT_PASSWORD", secrets_manager.SECRET_CERT_PASSWORD, passphrase
+        ),
     }
 
 
-def save_env(base_dir: Path, values: dict) -> None:
+def save_env(base_dir: Path, values: dict, passphrase: str | None = None) -> None:
     """Schreibt/aktualisiert Schluessel in der .env, ohne andere, dort bereits
     vorhandene Variablen zu verlieren. Wird vom Setup-Screen genutzt, damit
     Zugangsdaten direkt aus der App heraus (auch in der kompilierten .exe)
     gespeichert werden koennen, statt die Datei manuell editieren zu muessen.
+
+    PAPERLESS_TOKEN/PAPERLESS_CLIENT_CERT_PASSWORD werden NIE (auch nicht
+    voruebergehend) im Klartext in .env geschrieben - die gehen ausschliesslich
+    an secrets_manager. Ist kein Keyring verfuegbar und keine passphrase
+    gegeben, wirft das secrets_manager.SecretsLockedError (siehe dort) -
+    die UI muss dann vorher eine Passphrase abfragen.
     """
     env_path = base_dir / ".env"
     existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
     for key, value in values.items():
+        if key in ("PAPERLESS_TOKEN", "PAPERLESS_CLIENT_CERT_PASSWORD"):
+            continue
         if value is not None:
             existing[key] = value
     with open(env_path, "w", encoding="utf-8") as f:
         for key, value in existing.items():
             f.write(f"{key}={value}\n")
+
+    if values.get("PAPERLESS_TOKEN") is not None:
+        secrets_manager.set_secret(base_dir, secrets_manager.SECRET_TOKEN, values["PAPERLESS_TOKEN"], passphrase=passphrase)
+    if values.get("PAPERLESS_CLIENT_CERT_PASSWORD") is not None:
+        secrets_manager.set_secret(
+            base_dir, secrets_manager.SECRET_CERT_PASSWORD, values["PAPERLESS_CLIENT_CERT_PASSWORD"], passphrase=passphrase
+        )
 
 
 def is_configured(env: dict) -> bool:
