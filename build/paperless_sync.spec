@@ -52,20 +52,18 @@ for pkg in ("streamlit", "cryptography"):
 # dem gebuendelten Verzeichnis lesen muss. app.py liegt im Quellcode jetzt
 # in legacy/, landet im Bundle aber weiterhin flach im Root ("."), damit
 # run_app.py.resolve_app_path() (frozen-Zweig) unveraendert funktioniert.
-# Die Core-/State-Backend-Module liegen jetzt unter src/paperless_sync/ -
-# muessen inkl. aller __init__.py als echtes Package ins Bundle, sonst
-# schlagen app.py's "from paperless_sync.core.xxx import ..."/
-# "from paperless_sync.state.session_store import ..." zur Laufzeit fehl
-# (der Bundle-Root liegt bei einem frozen Onedir-Build automatisch auf
-# sys.path).
+# Die Core-Backend-Module liegen jetzt unter src/paperless_sync/core/ -
+# muessen inkl. beider __init__.py als echtes Package ins Bundle, sonst
+# schlaegt app.py's "from paperless_sync.core.xxx import ..." zur
+# Laufzeit fehl (der Bundle-Root liegt bei einem frozen Onedir-Build
+# automatisch auf sys.path).
 datas += [
     (os.path.join(REPO_ROOT, "legacy", "app.py"), "."),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "__init__.py"), "paperless_sync"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "__init__.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "config_manager.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "csv_utils.py"), "paperless_sync/core"),
-    (os.path.join(REPO_ROOT, "src", "paperless_sync", "state", "__init__.py"), "paperless_sync/state"),
-    (os.path.join(REPO_ROOT, "src", "paperless_sync", "state", "session_store.py"), "paperless_sync/state"),
+    (os.path.join(REPO_ROOT, "session_store.py"), "."),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "paperless_client.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "matcher.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "exporter.py"), "paperless_sync/core"),

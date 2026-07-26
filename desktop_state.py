@@ -18,7 +18,7 @@ from paperless_sync.core.config_manager import (
     is_configured,
     csv_signature as compute_csv_signature,
 )
-from .session_store import save_session, load_session
+from session_store import save_session, load_session
 from paperless_sync.core.paperless_client import PaperlessClient
 
 SUCCESS_STATUSES = ("matched", "tagged", "uploaded")
