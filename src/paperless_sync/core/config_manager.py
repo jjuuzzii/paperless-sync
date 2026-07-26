@@ -104,6 +104,24 @@ def get_base_dir() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def get_enable_banking_key_path() -> Path:
+    """Erwarteter Pfad fuer den persoenlichen Enable-Banking-Application-
+    Private-Key - eine rein lokale, nicht oeffentliche Erweiterung (siehe
+    enable_banking_client.py, per .gitignore vom Repo ausgeschlossen).
+
+    Nutzt bewusst IMMER den echten plattformueblichen Nutzerdaten-Ort
+    (platformdirs) und NICHT get_base_dir() selbst: get_base_dir() zeigt im
+    Quellcode-Betrieb auf den Repo-Ordner - fuer einen privaten Schluessel
+    waere das der falsche Ort, selbst mit .gitignore (z.B. bei einem
+    versehentlichen 'git add -A'). Legt den Unterordner enable_banking/ an,
+    falls er noch nicht existiert - fasst eine dort bereits vorhandene
+    .pem-Datei NIE an (weder lesend noch schreibend)."""
+    base = Path(user_data_dir("PaperlessSync", appauthor=False, roaming=True))
+    folder = base / "enable_banking"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "application.pem"
+
+
 def get_resource_dir() -> Path:
     """Ordner mit den zur Build-Zeit gebuendelten Default-Dateien. Bei
     PyInstaller (onedir) ist das sys._MEIPASS (der '_internal'-Ordner), im

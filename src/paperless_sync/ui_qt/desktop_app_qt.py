@@ -48,12 +48,22 @@ from PySide6.QtWidgets import (
 from paperless_sync.state.desktop_state import AppState
 from paperless_sync.state.desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
 from .dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
-from paperless_sync.core.config_manager import get_resource_dir
+from paperless_sync.core.config_manager import get_resource_dir, get_enable_banking_key_path
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
 from paperless_sync.core.exporter import count_open_items
 from version import __version__
+
+# Persoenliche, NICHT-oeffentliche Erweiterung (siehe .gitignore) - existiert
+# nur lokal, andere Checkouts/der oeffentliche Build haben dieses Modul
+# nicht. App funktioniert ohne unveraendert weiter (nur CSV-Import),
+# absichtlich ohne Fehlermeldung oder sichtbaren Hinweis in dem Fall.
+try:
+    from paperless_sync.core.enable_banking_client import EnableBankingClient
+    ENABLE_BANKING_AVAILABLE = True
+except ImportError:
+    ENABLE_BANKING_AVAILABLE = False
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im
 # Verwendungszweck nie hilfreich, nur fuer die Anzeige entfernt.
@@ -380,6 +390,17 @@ class DesktopAppQt(QMainWindow):
         upload_btn.clicked.connect(self._on_upload_csv_click)
         layout.addWidget(upload_btn)
         layout.addSpacing(8)
+
+        # Persoenliche, nicht-oeffentliche Erweiterung - siehe Import oben.
+        # Ohne das Modul (oeffentlicher Checkout) oder ohne abgelegten
+        # Schluessel bleibt die App unveraendert nur mit CSV-Import
+        # nutzbar, ganz ohne sichtbaren Hinweis auf dieses Feature.
+        if ENABLE_BANKING_AVAILABLE and get_enable_banking_key_path().exists():
+            bank_import_btn = QPushButton(tr("Von Bank importieren"))
+            bank_import_btn.setStyleSheet(self._flat_button_style())
+            bank_import_btn.clicked.connect(self._on_bank_import_click)
+            layout.addWidget(bank_import_btn)
+            layout.addSpacing(8)
 
         self.match_btn = QPushButton(f"🔍  {tr('Mit Paperless abgleichen')}")
         self._match_btn_default_text = self.match_btn.text()
@@ -1156,6 +1177,21 @@ class DesktopAppQt(QMainWindow):
             dlg.exec()
         else:
             self.render()
+
+    def _on_bank_import_click(self):
+        """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
+        Dateianfang. Bewusst noch ein Platzhalter: der volle Ablauf
+        (Bank-Auswahl, Weiterleitung zum Bank-Login, Rueckgabe des
+        Autorisierungs-Codes ueber redirect_url) braucht noch eine
+        Design-Entscheidung, WIE der Code nach dem Redirect zurueck in die
+        App kommt (lokaler HTTP-Listener vs. manuelles Einfuegen) - siehe
+        Chat."""
+        QMessageBox.information(
+            self,
+            tr("Von Bank importieren"),
+            "Enable-Banking-Anbindung ist vorbereitet (Client, Datenformat-Adapter), "
+            "der Autorisierungs-Ablauf in der UI fehlt noch.",
+        )
 
     def _on_mapping_confirmed(self, date_col, amount_col, purpose_col, counterparty_col=None):
         try:
