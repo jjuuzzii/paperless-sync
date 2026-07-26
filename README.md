@@ -84,7 +84,14 @@ All settings are reachable from the "⚙️ Settings" button in the app — no m
 - **CSV column mapping** — which columns hold date/amount/purpose/sender
 - **Custom tags, noise terms, backup/restore, language, company logo**
 
-User data (config, credentials, session state) lives in the platform-standard per-user app data location when running a built app — Windows: `%APPDATA%\PaperlessSync`, macOS: `~/Library/Application Support/PaperlessSync`, Linux: `~/.config/PaperlessSync` — and next to the source files when run from source.
+User data (config, session state, backups) lives in the platform-standard per-user app data location when running a built app — Windows: `%APPDATA%\PaperlessSync`, macOS: `~/Library/Application Support/PaperlessSync`, Linux: `~/.config/PaperlessSync` — and next to the source files when run from source. Credentials are stored separately — see [Privacy & Security](#privacy--security).
+
+## Privacy & Security
+
+- **Everything runs locally.** Your bank statement CSV is parsed on your machine; matching happens directly against the Paperless-ngx instance you configure. There's no cloud service, no telemetry, no analytics — bank transaction data never leaves your device except to the Paperless-ngx server you point the app at (which you host/control).
+- **Credentials are never stored in plain text.** The Paperless API token and mTLS client certificate password are kept in your operating system's native credential store — Windows Credential Manager, macOS Keychain, or the Linux Secret Service (via the [keyring](https://pypi.org/project/keyring/) package). If no OS credential store is available (can happen on some minimal/headless Linux setups), the app falls back to passphrase-based encryption (AES via [Fernet](https://cryptography.io/en/latest/fernet/)) instead of ever silently falling back to plain text.
+- **The working session is encrypted too.** `session_state.json` — the in-progress state that lets you close the app mid-reconciliation without losing work — contains transaction details and uploaded receipts, so it's encrypted at rest with the same key management as above.
+- **Backups can be password-protected.** Since a backup includes your credentials (so it's actually useful after restoring on a new machine), the app prompts for a password when creating one and encrypts the ZIP with AES if you set one. Skipping the password triggers an explicit warning — it's never silently unencrypted without you choosing that.
 
 ## Architecture
 
