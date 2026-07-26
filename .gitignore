@@ -1,6 +1,7 @@
 # Secrets
 .env
 paperless_client_cert.p12
+src/paperless_sync/core/enable_banking_client.py
 
 # Laufzeitdaten
 /input/*
