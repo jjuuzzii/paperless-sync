@@ -48,6 +48,7 @@ from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfV
 from config_manager import get_resource_dir
 from theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
 from i18n import tr, set_language
+from version import __version__
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im
 # Verwendungszweck nie hilfreich, nur fuer die Anzeige entfernt.
@@ -414,6 +415,12 @@ class DesktopAppQt(QMainWindow):
         )
         export_btn.clicked.connect(self._on_generate_export_click)
         layout.addWidget(export_btn)
+
+        layout.addSpacing(8)
+        version_lbl = QLabel(f"v{__version__}")
+        version_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 8pt; border: none;")
+        version_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(version_lbl)
 
         self._refresh_logo()
         root_layout.addWidget(sidebar)
