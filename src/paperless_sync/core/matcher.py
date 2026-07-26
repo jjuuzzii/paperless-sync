@@ -6,6 +6,7 @@ import re
 from dateutil import parser as dateparser
 
 from .csv_utils import parse_amount, parse_date
+from .tx_status import TxStatus
 
 
 def build_transactions(df, mapping: dict) -> list[dict]:
@@ -46,12 +47,12 @@ def build_transactions(df, mapping: dict) -> list[dict]:
         month_key = r["date"].strftime("%Y-%m")
         month_counters[month_key] = month_counters.get(month_key, 0) + 1
         r["display_number"] = f"{month_counters[month_key]:03d}"  # 1..X je Monat - das sieht der Nutzer (Karte/Export)
-        r["status"] = None  # None | matched | missing | unclear | tagged | uploaded
+        r["status"] = TxStatus.UNRESOLVED  # siehe tx_status.TxStatus
         r["note"] = ""
         r["tag"] = None  # gesetzt, wenn status == "tagged" (PRIVAT/EINZAHLUNG/UMBUCHUNG/eigener Tag)
         r["suggested_tag"] = None  # Vorschlag aus gelerntem Verwendungszweck, noch nicht bestaetigt
         r["matched_docs"] = []  # ein oder mehrere verknuepfte Paperless-Dokumente (z.B. Sammelabbuchung)
-        r["candidate_docs"] = None  # bei status == "unclear": Liste der mehrdeutigen Kandidaten
+        r["candidate_docs"] = None  # bei status == MULTI_MATCH: Liste der mehrdeutigen Kandidaten
         r["uploaded_bytes"] = None
         r["uploaded_name"] = None
         transactions.append(r)
@@ -127,14 +128,15 @@ def fetch_and_prepare_paperless_docs(client, amount_detection: dict) -> list[dic
 
 def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> None:
     """Gleicht alle Transaktionen ab, die noch nicht manuell entschieden
-    wurden (tagged/uploaded/matched bleiben unangetastet). Aendert die
-    uebergebenen Transaktions-Dicts in-place.
+    wurden (TAGGED/MATCHED bleiben unangetastet - MATCHED deckt auch bereits
+    hochgeladene PDFs ab, siehe TxStatus). Aendert die uebergebenen
+    Transaktions-Dicts in-place.
 
     Match-Regel: NUR der Betrag muss exakt uebereinstimmen (auf 2
     Nachkommastellen gerundet) - kein Zeitfenster/Datumsabgleich, Belege
     koennen beliebig lange vor oder nach der Buchung in Paperless liegen.
     Tritt der Betrag mehrfach auf, wird NICHT geraten - die Transaktion
-    wandert als "unclear" in Fehlt/Unklar. Jedes Paperless-Dokument wird
+    wandert als MULTI_MATCH in Fehlt/Unklar. Jedes Paperless-Dokument wird
     hoechstens einer Transaktion zugeordnet.
     """
     candidates_pool = [d for d in paperless_docs if d["amount"] is not None]
@@ -147,17 +149,18 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> 
     # hochgeladenen Belegen) einer ANDEREN, noch offenen Transaktion mit
     # demselben Betrag angeboten werden.
     for tx in transactions:
-        if tx["status"] in ("tagged", "uploaded", "matched"):
+        if tx["status"] in (TxStatus.TAGGED, TxStatus.MATCHED):
             for doc in tx.get("matched_docs") or []:
                 used_doc_ids.add(doc["id"])
 
     for tx in transactions:
-        # "matched" bewusst mit ausgenommen: sonst wuerde ein erneuter
-        # Abgleich eine manuell aus mehreren Kandidaten aufgeloeste
-        # Zuordnung (siehe Controller.on_ambiguous_doc_selected) wieder
-        # verwerfen, sobald der Betrag weiterhin mehrfach vorkommt - was er
-        # bei einem echten Mehrfach-Match fast immer tut.
-        if tx["status"] in ("tagged", "uploaded", "matched"):
+        # MATCHED bewusst mit ausgenommen (deckt auch bereits hochgeladene
+        # PDFs ab, siehe TxStatus): sonst wuerde ein erneuter Abgleich eine
+        # manuell aus mehreren Kandidaten aufgeloeste Zuordnung (siehe
+        # Controller.on_ambiguous_doc_selected) wieder verwerfen, sobald der
+        # Betrag weiterhin mehrfach vorkommt - was er bei einem echten
+        # Mehrfach-Match fast immer tut.
+        if tx["status"] in (TxStatus.TAGGED, TxStatus.MATCHED):
             continue
 
         candidates = [
@@ -169,17 +172,17 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> 
         if len(candidates) == 1:
             doc = candidates[0]
             used_doc_ids.add(doc["id"])
-            tx["status"] = "matched"
+            tx["status"] = TxStatus.MATCHED
             tx["matched_docs"] = [doc]
             tx["candidate_docs"] = None
             tx["note"] = ""
         elif len(candidates) == 0:
-            tx["status"] = "missing"
+            tx["status"] = TxStatus.UNRESOLVED
             tx["matched_docs"] = []
             tx["candidate_docs"] = None
             tx["note"] = ""
         else:
-            tx["status"] = "unclear"
+            tx["status"] = TxStatus.MULTI_MATCH
             tx["matched_docs"] = []
             tx["candidate_docs"] = candidates  # fuer die manuelle Auswahl in der UI
             tx["note"] = "Achtung: Betrag tritt mehrfach auf - Bitte manuell zuordnen"

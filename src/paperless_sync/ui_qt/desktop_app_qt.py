@@ -51,6 +51,7 @@ from .dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, Pdf
 from paperless_sync.core.config_manager import get_resource_dir
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
 from paperless_sync.core.i18n import tr, set_language
+from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
 from version import __version__
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im
@@ -632,10 +633,10 @@ class DesktopAppQt(QMainWindow):
             old.deleteLater()
         tx = next((t for t in self.app_state.visible_transactions if t["id"] == tx_id), None)
         if tx is not None:
-            if tx["status"] in ("matched", "tagged", "uploaded"):
+            if tx["status"] in DONE_STATUSES:
                 w = self._render_success_card(tx)
                 self.success_layout.insertWidget(max(0, self.success_layout.count() - 1), w)
-            elif tx["status"] == "unclear":
+            elif tx["status"] == TxStatus.MULTI_MATCH:
                 w = self._render_action_card(tx, is_unclear=True)
                 self.action_layout.insertWidget(0, w)
             else:
@@ -702,11 +703,11 @@ class DesktopAppQt(QMainWindow):
         outer.addLayout(top)
 
         bottom = QHBoxLayout()
-        if tx["status"] == "matched":
-            doc_count = len(tx.get("matched_docs") or [])
-            label = f"🔗 {tr('Automatisch zugeordnet')}" if doc_count <= 1 else f"🔗 {tr('{doc_count} Belege verknuepft', doc_count=doc_count)}"
-            bottom.addWidget(self._pill(label, COLORS["green"], COLORS["green_dim"]))
-        elif tx["status"] == "uploaded":
+        # Reihenfolge bewusst: uploaded_bytes zuerst pruefen - TxStatus.MATCHED
+        # deckt sowohl Paperless-verknuepfte als auch direkt hochgeladene
+        # Belege ab (siehe TxStatus), die beiden Faelle unterscheiden sich
+        # nur an diesen Feldern, nicht mehr am Status.
+        if tx.get("uploaded_bytes"):
             bottom.addWidget(self._pill(f"📤 {tr('Hochgeladen')}", COLORS["blue"], COLORS["blue_dim"]))
             view_btn = QPushButton(f"👁 {tr('Vorschau')}")
             view_btn.setCursor(Qt.PointingHandCursor)
@@ -716,6 +717,10 @@ class DesktopAppQt(QMainWindow):
             )
             view_btn.clicked.connect(lambda _=False, t=tx: self._view_uploaded_pdf(t))
             bottom.addWidget(view_btn)
+        elif tx["status"] == TxStatus.MATCHED:
+            doc_count = len(tx.get("matched_docs") or [])
+            label = f"🔗 {tr('Automatisch zugeordnet')}" if doc_count <= 1 else f"🔗 {tr('{doc_count} Belege verknuepft', doc_count=doc_count)}"
+            bottom.addWidget(self._pill(label, COLORS["green"], COLORS["green_dim"]))
         else:
             tag = tx.get("tag") or "SONSTIGES"
             icon = TAG_ICONS.get(tag, "🏷️")
@@ -734,7 +739,7 @@ class DesktopAppQt(QMainWindow):
         undo_btn.clicked.connect(lambda _=False, t=tx: self._on_undo_click(t["id"]))
         bottom.addWidget(undo_btn)
         outer.addLayout(bottom)
-        if tx["status"] == "matched":
+        if tx.get("matched_docs"):
             self._build_doc_chip_row(outer, tx)
         return card
 

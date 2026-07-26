@@ -13,6 +13,7 @@ from paperless_sync.core.csv_utils import read_csv_raw
 from paperless_sync.core.matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
 from paperless_sync.core.exporter import generate_export
 from paperless_sync.core.config_manager import csv_signature as compute_csv_signature
+from paperless_sync.core.tx_status import TxStatus
 
 BUILTIN_TAGS = ["PRIVAT", "EINZAHLUNG", "UMBUCHUNG"]
 TAG_ICONS = {"PRIVAT": "🔒", "EINZAHLUNG": "💰", "UMBUCHUNG": "🔄"}
@@ -140,7 +141,7 @@ class Controller:
             return 0
         count = 0
         for tx in state.transactions:
-            if tx["status"] is None:
+            if tx["status"] == TxStatus.UNRESOLVED:
                 learned = memory.get(normalize_purpose(tx["purpose"]))
                 if learned:
                     tx["suggested_tag"] = learned
@@ -160,7 +161,7 @@ class Controller:
         if tag_name not in BUILTIN_TAGS:
             tag_name = self._normalize_custom_tag_name(tag_name)
 
-        tx["status"] = "tagged"
+        tx["status"] = TxStatus.TAGGED
         tx["tag"] = tag_name
         tx["note"] = ""
         tx["suggested_tag"] = None
@@ -188,7 +189,7 @@ class Controller:
         path = Path(filepath)
         file_bytes = path.read_bytes()
         state.client.upload_document(file_bytes, path.name)
-        tx["status"] = "uploaded"
+        tx["status"] = TxStatus.MATCHED
         tx["uploaded_bytes"] = file_bytes
         tx["uploaded_name"] = path.name
         tx["note"] = ""
@@ -221,7 +222,7 @@ class Controller:
                 raise ValueError(f"Dokument #{doc_id} nicht in der geladenen Liste gefunden.")
             docs.append(dict(doc))
             self._apply_success_tag_in_paperless(doc_id)
-        tx["status"] = "matched"
+        tx["status"] = TxStatus.MATCHED
         tx["candidate_docs"] = None
         tx["note"] = ""
         state.persist_session()
@@ -236,8 +237,12 @@ class Controller:
         docs = tx.get("matched_docs") or []
         tx["matched_docs"] = [d for d in docs if d["id"] != doc_id]
         self._remove_success_tag_in_paperless(doc_id)
-        if not tx["matched_docs"] and tx["status"] == "matched":
-            tx["status"] = None
+        # uploaded_bytes-Check noetig, weil TxStatus.MATCHED sowohl
+        # Paperless-verknuepfte als auch direkt hochgeladene Belege abdeckt
+        # (siehe TxStatus) - letztere haben nie matched_docs, duerfen hier
+        # also nicht faelschlich zurueckgesetzt werden.
+        if not tx["matched_docs"] and not tx.get("uploaded_bytes") and tx["status"] == TxStatus.MATCHED:
+            tx["status"] = TxStatus.UNRESOLVED
         self.state.persist_session()
 
     def on_ambiguous_doc_selected(self, transaction_id: str, paperless_doc_id: int) -> None:
@@ -254,7 +259,7 @@ class Controller:
 
     def _apply_matched_doc(self, transaction_id: str, doc: dict) -> None:
         tx = self._find_tx(transaction_id)
-        tx["status"] = "matched"
+        tx["status"] = TxStatus.MATCHED
         tx["matched_docs"] = [dict(doc)]
         tx["candidate_docs"] = None
         tx["note"] = ""
@@ -299,17 +304,17 @@ class Controller:
 
     def on_undo_resolution(self, transaction_id: str) -> None:
         """Macht eine Tag-Vergabe oder Beleg-Zuordnung rueckgaengig - die
-        Transaktion wandert zurueck nach 'Aktion erforderlich' (status=None)
-        und kann neu getaggt/zugeordnet werden. custom_tags-Zaehler und
-        purpose_tag_memory bleiben bewusst unangetastet (ein einzelnes
-        Rueckgaengigmachen soll nicht das gelernte Muster fuer alle
-        aehnlichen Buchungen loeschen). Ein bereits nach Paperless
-        hochgeladenes Dokument (status 'uploaded') bleibt dort liegen - nur
-        die lokale Zuordnung wird zurueckgesetzt."""
+        Transaktion wandert zurueck nach 'Aktion erforderlich'
+        (status=UNRESOLVED) und kann neu getaggt/zugeordnet werden.
+        custom_tags-Zaehler und purpose_tag_memory bleiben bewusst
+        unangetastet (ein einzelnes Rueckgaengigmachen soll nicht das
+        gelernte Muster fuer alle aehnlichen Buchungen loeschen). Ein
+        bereits nach Paperless hochgeladenes Dokument bleibt dort liegen -
+        nur die lokale Zuordnung wird zurueckgesetzt."""
         tx = self._find_tx(transaction_id)
         for doc in tx.get("matched_docs") or []:
             self._remove_success_tag_in_paperless(doc["id"])
-        tx["status"] = None
+        tx["status"] = TxStatus.UNRESOLVED
         tx["tag"] = None
         tx["matched_docs"] = []
         tx["candidate_docs"] = None

@@ -22,7 +22,7 @@ Paperless Sync ist ein Windows-Desktop-Tool (PySide6/Qt), das Banktransaktionen 
 | `src/paperless_sync/core/config_manager.py` | Lädt/speichert `.env` und `config.json` |
 | `src/paperless_sync/core/backup.py` | ZIP-Backup/-Restore aller Nutzerdaten |
 | `src/paperless_sync/core/i18n.py` | Minimale DE/EN-Übersetzung der Oberfläche |
-| `tx_status.py` | Zentrale Transaktions-Status-Werte (siehe unten) |
+| `src/paperless_sync/core/tx_status.py` | Zentrale Transaktions-Status-Werte (siehe unten) |
 | `version.py` | Zentrale Versionsnummer (`__version__`) |
 
 Ältere Oberflächen (CustomTkinter, Streamlit) sind nach `legacy/` archiviert, siehe `legacy/README.md` — nicht mehr aktiv gepflegt, Änderungen daran nur auf ausdrücklichen Wunsch.

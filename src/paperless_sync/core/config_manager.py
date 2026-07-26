@@ -59,10 +59,10 @@ DEFAULT_CONFIG = {
     # einer Buchung zugeordnet wurden (automatisch gematcht, manuell
     # verknuepft oder per Mehrfach-Match aufgeloest) - damit der
     # Abgleichsstatus auch direkt in Paperless sichtbar/filterbar ist. Gilt
-    # NICHT fuer frisch hochgeladene PDFs (status "uploaded"): Paperless
-    # verarbeitet Uploads asynchron, eine Dokument-ID liegt dafuer noch
-    # nicht vor. Der Tag wird in Paperless automatisch angelegt, falls er
-    # noch nicht existiert.
+    # NICHT fuer frisch hochgeladene PDFs (siehe TxStatus - MATCHED, aber
+    # ohne matched_docs): Paperless verarbeitet Uploads asynchron, eine
+    # Dokument-ID liegt dafuer noch nicht vor. Der Tag wird in Paperless
+    # automatisch angelegt, falls er noch nicht existiert.
     "paperless_success_tag_enabled": True,
     "paperless_success_tag_name": "Abgeglichen",
     # Oberflaechen-Sprache (siehe i18n.py) - "de" oder "en". Wirkt erst nach

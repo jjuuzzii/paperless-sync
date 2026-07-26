@@ -20,8 +20,18 @@ from paperless_sync.core.config_manager import (
 )
 from .session_store import save_session, load_session
 from paperless_sync.core.paperless_client import PaperlessClient
+from paperless_sync.core.tx_status import TxStatus, OPEN_STATUSES, DONE_STATUSES
 
-SUCCESS_STATUSES = ("matched", "tagged", "uploaded")
+# Alte, vor Einfuehrung von TxStatus persistierte Sitzungen kennen den
+# Status noch als losen String (oder None) statt als TxStatus-Member -
+# siehe _backfill_status. "matched"/"tagged" sind unveraendert gueltige
+# TxStatus-Werte und muessen hier nicht uebersetzt werden.
+_LEGACY_STATUS_MAP = {
+    None: TxStatus.UNRESOLVED,
+    "missing": TxStatus.UNRESOLVED,
+    "unclear": TxStatus.MULTI_MATCH,
+    "uploaded": TxStatus.MATCHED,
+}
 
 
 class AppState:
@@ -134,6 +144,7 @@ class AppState:
         self.transactions = restored.get("transactions") or []
         self._backfill_display_numbers()
         self._backfill_matched_docs()
+        self._backfill_status()
         self.reapply_counterparty_mapping()
 
     def _backfill_display_numbers(self) -> None:
@@ -169,6 +180,21 @@ class AppState:
             legacy = t.pop("matched_doc", None)
             t["matched_docs"] = [legacy] if legacy else []
             changed = True
+        if changed:
+            self.persist_session()
+
+    def _backfill_status(self) -> None:
+        """Aeltere Sitzungen (vor Einfuehrung von TxStatus) kennen tx['status']
+        noch als losen String oder None statt als TxStatus-Member - siehe
+        _LEGACY_STATUS_MAP. Tastet Tags/Matches/sonstige Felder nicht an."""
+        changed = False
+        for t in self.transactions:
+            raw = t.get("status")
+            if raw in _LEGACY_STATUS_MAP:
+                t["status"] = _LEGACY_STATUS_MAP[raw]
+                changed = True
+            else:
+                t["status"] = TxStatus(raw)
         if changed:
             self.persist_session()
 
@@ -233,18 +259,21 @@ class AppState:
 
     @property
     def success_transactions(self) -> list[dict]:
-        return [t for t in self.visible_transactions if t["status"] in SUCCESS_STATUSES]
+        return [t for t in self.visible_transactions if t["status"] in DONE_STATUSES]
 
     @property
     def missing_transactions(self) -> list[dict]:
         """Rote Karten: kein Beleg gefunden (oder noch nicht abgeglichen)."""
-        return [t for t in self.visible_transactions if t["status"] in (None, "missing")]
+        return [t for t in self.visible_transactions if t["status"] == TxStatus.UNRESOLVED]
 
     @property
     def unclear_transactions(self) -> list[dict]:
         """Gelbe Karten: Betrag tritt mehrfach auf, manuelle Auswahl noetig."""
-        return [t for t in self.visible_transactions if t["status"] == "unclear"]
+        return [t for t in self.visible_transactions if t["status"] == TxStatus.MULTI_MATCH]
 
     @property
     def action_transactions(self) -> list[dict]:
-        return self.missing_transactions + self.unclear_transactions
+        """Alle Buchungen, die noch Klaerung brauchen - siehe
+        tx_status.OPEN_STATUSES (deckt auch DUPLICATE_SUSPECT/SPLIT_PAYMENT
+        ab, sobald es dafuer eine Erkennungslogik gibt)."""
+        return [t for t in self.visible_transactions if t["status"] in OPEN_STATUSES]
