@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QFileDialog,
     QMessageBox,
+    QInputDialog,
     QListWidget,
     QListWidgetItem,
     QAbstractItemView,
 )
 
-from paperless_sync.core.backup import create_backup, restore_backup, backup_filename
+from paperless_sync.core.backup import create_backup, restore_backup, backup_filename, WrongBackupPasswordError
+from paperless_sync.core.secrets_manager import SecretsLockedError
 from paperless_sync.core.config_manager import get_resource_dir, csv_signature as compute_csv_signature, PLACEHOLDER_TOKEN
 from paperless_sync.core.paperless_client import PaperlessClient
 from .theme_qt import COLORS, font as qfont, NoScrollComboBox
@@ -561,14 +563,48 @@ class SettingsDialog(QDialog):
         except Exception as exc:
             self.status_label.setText(tr("Custom Fields nicht ladbar: {exc}", exc=exc))
 
+    def _prompt_backup_password(self, title: str, label: str) -> str | None:
+        """None = Nutzer hat abgebrochen. Leerer String = bewusst kein
+        Passwort gesetzt (muss vom Aufrufer ggf. gesondert bestaetigt
+        werden, siehe _create_backup)."""
+        text, ok = QInputDialog.getText(self, title, label, QLineEdit.Password)
+        if not ok:
+            return None
+        return text
+
     def _create_backup(self):
+        password = self._prompt_backup_password(
+            tr("Backup-Passwort"),
+            tr("Passwort fuer dieses Backup (leer lassen fuer kein Passwort):"),
+        )
+        if password is None:
+            return
+        if not password:
+            confirm = QMessageBox.question(
+                self,
+                tr("Kein Passwort gesetzt"),
+                tr(
+                    "Ohne Passwort ist das Backup NICHT verschluesselt - jeder mit Zugriff auf die Datei kann "
+                    "deine Paperless-Zugangsdaten (Token, ggf. Zertifikat-Passwort) direkt auslesen. "
+                    "Wirklich ohne Passwort fortfahren?"
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
+
         path, _ = QFileDialog.getSaveFileName(self, tr("Backup speichern"), backup_filename(), "ZIP-Archiv (*.zip)")
         if not path:
             return
         if not path.lower().endswith(".zip"):
             path += ".zip"
         try:
-            Path(path).write_bytes(create_backup(self.state_ref.base_dir))
+            Path(path).write_bytes(create_backup(self.state_ref.base_dir, password=password or None))
+        except SecretsLockedError:
+            self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig) - Backup nicht moeglich."))
+            return
         except Exception as exc:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
             self.status_label.setText(tr("Backup fehlgeschlagen: {exc}", exc=exc))
@@ -592,8 +628,22 @@ class SettingsDialog(QDialog):
         )
         if confirm != QMessageBox.Yes:
             return
+        password = self._prompt_backup_password(
+            tr("Backup entschluesseln"),
+            tr("Passwort dieses Backups (leer lassen, falls keins gesetzt wurde):"),
+        )
+        if password is None:
+            return
         try:
-            restored = restore_backup(self.state_ref.base_dir, Path(path).read_bytes())
+            restored = restore_backup(self.state_ref.base_dir, Path(path).read_bytes(), password=password or None)
+        except WrongBackupPasswordError:
+            self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+            self.status_label.setText(tr("Falsches Passwort (oder das Backup ist verschluesselt)."))
+            return
+        except SecretsLockedError:
+            self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig) - Wiederherstellung nicht moeglich."))
+            return
         except Exception as exc:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
             self.status_label.setText(tr("Wiederherstellung fehlgeschlagen: {exc}", exc=exc))
