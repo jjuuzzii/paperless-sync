@@ -41,6 +41,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QLineEdit,
     QInputDialog,
+    QDialog,
+    QListWidget,
 )
 
 # sys.path (Repo-Root + src/) wird vom Einstiegspunkt (run_app.py) VOR dem
@@ -263,6 +265,67 @@ class StatusDot(QWidget):
 
     def set_text(self, text: str):
         self.label.setText(text)
+
+
+class SearchableListDialog(QDialog):
+    """Durchsuchbare Auswahlliste - fuer sehr lange Listen (z.B. hunderte
+    Banken pro Land bei der Enable-Banking-Erweiterung), bei denen
+    QInputDialog.getItem() unhandlich waere. Tippen filtert die Liste live;
+    generisch gehalten (kein Enable-Banking-Bezug im Namen/Code), auch
+    fuer andere lange Auswahllisten wiederverwendbar."""
+
+    def __init__(self, parent, title: str, items: list[str], preselect: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(420, 480)
+        self._all_items = items
+        self._selected: str | None = None
+
+        layout = QVBoxLayout(self)
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText(tr("Suchen..."))
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        layout.addWidget(self._filter_edit)
+
+        self._list_widget = QListWidget()
+        self._list_widget.itemDoubleClicked.connect(lambda _item: self._accept_current())
+        layout.addWidget(self._list_widget, stretch=1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton(tr("Abbrechen"))
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        ok_btn = QPushButton(tr("Auswaehlen"))
+        ok_btn.clicked.connect(self._accept_current)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        self._populate(items)
+        if preselect:
+            matches = self._list_widget.findItems(preselect, Qt.MatchExactly)
+            if matches:
+                self._list_widget.setCurrentItem(matches[0])
+                self._list_widget.scrollToItem(matches[0])
+
+    def _populate(self, items: list[str]):
+        self._list_widget.clear()
+        self._list_widget.addItems(items)
+        if self._list_widget.count() > 0 and self._list_widget.currentRow() < 0:
+            self._list_widget.setCurrentRow(0)
+
+    def _apply_filter(self, text: str):
+        text_lower = text.lower()
+        self._populate([i for i in self._all_items if text_lower in i.lower()])
+
+    def _accept_current(self):
+        item = self._list_widget.currentItem()
+        if item is not None:
+            self._selected = item.text()
+            self.accept()
+
+    def selected_item(self) -> str | None:
+        return self._selected
 
 
 class DesktopAppQt(QMainWindow):
@@ -1184,14 +1247,24 @@ class DesktopAppQt(QMainWindow):
     def _on_bank_import_click(self):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
         Dateianfang. Ablauf: Application ID einmalig abfragen (danach ueber
-        secrets_manager gemerkt), Land + Bank waehlen, dann Bank-Login im
-        Browser oeffnen (enable_banking_client.open_authorization) - die
-        registrierte REDIRECT_URL zeigt auf einen entfernten, selbst
-        betriebenen Server (nicht localhost), der Autorisierungs-Code kann
-        von hier aus also NICHT automatisch abgefangen werden. Der Nutzer
-        kopiert ihn nach dem Login manuell aus der Adresszeile."""
+        secrets_manager gemerkt), Land + Bank waehlen (durchsuchbare Liste,
+        letzte Auswahl vorbelegt), dann Bank-Login im Browser oeffnen
+        (enable_banking_client.open_authorization) - die registrierte
+        REDIRECT_URL zeigt auf einen entfernten, selbst betriebenen Server
+        (nicht localhost), der Autorisierungs-Code kann von hier aus also
+        NICHT automatisch abgefangen werden. Der Nutzer fuegt nach dem
+        Login die komplette Ziel-URL ein, der Code wird daraus automatisch
+        herausgelesen (siehe extract_code_from_input)."""
         from paperless_sync.core import secrets_manager
-        from paperless_sync.core.enable_banking_client import EnableBankingClient, EnableBankingError, REDIRECT_URL, open_authorization
+        from paperless_sync.core.enable_banking_client import (
+            EnableBankingClient,
+            EnableBankingError,
+            REDIRECT_URL,
+            open_authorization,
+            extract_code_from_input,
+            load_last_selection,
+            save_last_selection,
+        )
 
         application_id = secrets_manager.get_secret(self.app_state.base_dir, "enable_banking_application_id")
         if not application_id:
@@ -1209,7 +1282,10 @@ class DesktopAppQt(QMainWindow):
                 )
                 return
 
-        country, ok = QInputDialog.getText(self, tr("Land"), tr("Laendercode (z.B. AT, DE):"))
+        last = load_last_selection()
+        country, ok = QInputDialog.getText(
+            self, tr("Land"), tr("Laendercode (z.B. AT, DE):"), text=last.get("country", "")
+        )
         if not ok or not country.strip():
             return
         country = country.strip().upper()
@@ -1228,9 +1304,14 @@ class DesktopAppQt(QMainWindow):
             return
 
         names = [a.get("name", "?") for a in aspsps]
-        bank_name, ok = QInputDialog.getItem(self, tr("Bank waehlen"), tr("Bank:"), names, editable=False)
-        if not ok:
+        preselect = last.get("aspsp_name") if last.get("country") == country else None
+        picker = SearchableListDialog(self, tr("Bank waehlen"), names, preselect=preselect)
+        if picker.exec() != QDialog.Accepted:
             return
+        bank_name = picker.selected_item()
+        if not bank_name:
+            return
+        save_last_selection(country, bank_name)
 
         try:
             open_authorization(client, bank_name, country)
@@ -1238,21 +1319,25 @@ class DesktopAppQt(QMainWindow):
             QMessageBox.critical(self, tr("Fehler"), str(exc))
             return
 
-        code, ok = QInputDialog.getText(
+        pasted, ok = QInputDialog.getText(
             self,
             tr("Autorisierungs-Code"),
             tr(
                 "Der Standard-Browser hat sich fuer den Bank-Login geoeffnet. Nach erfolgreichem Login "
-                "wirst du auf {url} weitergeleitet - kopiere den 'code'-Parameter aus der Adresszeile "
-                "und fuege ihn hier ein:",
+                "wirst du auf {url} weitergeleitet - die komplette Ziel-URL hier einfuegen (der Code "
+                "wird automatisch herausgelesen):",
                 url=REDIRECT_URL,
             ),
         )
-        if not ok or not code.strip():
+        if not ok or not pasted.strip():
+            return
+        code = extract_code_from_input(pasted)
+        if not code:
+            QMessageBox.warning(self, tr("Fehler"), tr("Kein Autorisierungs-Code in der Eingabe gefunden."))
             return
 
         try:
-            session = client.create_session(code.strip())
+            session = client.create_session(code)
         except EnableBankingError as exc:
             QMessageBox.critical(self, tr("Fehler"), str(exc))
             return
@@ -1279,6 +1364,8 @@ class DesktopAppQt(QMainWindow):
         if not ok:
             return
 
+        from datetime import date as _date
+
         from paperless_sync.core.enable_banking_client import (
             EnableBankingError,
             transactions_to_dataframe,
@@ -1286,7 +1373,9 @@ class DesktopAppQt(QMainWindow):
         )
 
         try:
-            raw_txs = self._bank_import_client.get_transactions(account_uid)
+            # Testweise bis 01.2024 zurueck (siehe Chat) - Standard ohne
+            # date_from ist offenbar deutlich kuerzer (nur 2026 kam zurueck).
+            raw_txs = self._bank_import_client.get_transactions(account_uid, date_from=_date(2024, 1, 1))
         except EnableBankingError as exc:
             QMessageBox.critical(self, tr("Fehler"), str(exc))
             return
