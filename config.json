@@ -1,0 +1,9 @@
+{
+  "csv_mappings": {},
+  "amount_detection": {
+    "method": "filename_regex",
+    "regex_pattern": "_EUR(\\d+\\.\\d+)",
+    "custom_field_id": null,
+    "custom_field_name": null
+  }
+}

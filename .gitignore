@@ -1,0 +1,29 @@
+# Secrets
+.env
+paperless_client_cert.p12
+
+# Laufzeitdaten
+/input/*
+!/input/.gitkeep
+!/input/beispiel_kontoauszug.csv
+/export/*
+!/export/.gitkeep
+session_state.json
+session_state.json.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# PyInstaller Build-Artefakte
+/build/
+/dist/
+*.spec.bak
+
+# Inno-Setup-Installer-Ausgabe
+/installer_output/
+
+# Claude Code Arbeitsverzeichnis (lokale Harness-Zustandsdatei, nicht Teil des Projekts)
+/.claude/
