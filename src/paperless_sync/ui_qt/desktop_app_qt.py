@@ -152,36 +152,6 @@ class MatchWorker(QObject):
             self.finished.emit(count, None)
 
 
-class _BankAuthWorker(QObject):
-    """Persoenliche, nicht-oeffentliche Erweiterung (siehe Import am
-    Dateianfang) - fuehrt authorize_and_create_session() in einem eigenen
-    Thread aus, da der Aufruf bis zu 5 Minuten auf den Bank-Login im
-    Browser wartet (gleiches Muster wie MatchWorker/ConnectionCheckWorker,
-    sonst friert die UI fuer die gesamte Wartezeit ein). Lazy-Import der
-    privaten enable_banking_client innerhalb run() - diese Klasse wird nur
-    instanziiert, wenn ENABLE_BANKING_AVAILABLE bereits True ist, aber der
-    Modul-Import selbst bleibt trotzdem auf den tatsaechlichen
-    Verwendungszeitpunkt beschraenkt."""
-
-    finished = Signal(object, object)  # (session_dict, error_message)
-
-    def __init__(self, client, aspsp_name, aspsp_country):
-        super().__init__()
-        self.client = client
-        self.aspsp_name = aspsp_name
-        self.aspsp_country = aspsp_country
-
-    def run(self):
-        from paperless_sync.core.enable_banking_client import authorize_and_create_session, EnableBankingError
-
-        try:
-            session = authorize_and_create_session(self.client, self.aspsp_name, self.aspsp_country)
-        except EnableBankingError as exc:
-            self.finished.emit(None, str(exc))
-        except Exception as exc:
-            self.finished.emit(None, str(exc))
-        else:
-            self.finished.emit(session, None)
 
 
 class DocDownloadWorker(QObject):
@@ -1213,13 +1183,14 @@ class DesktopAppQt(QMainWindow):
     def _on_bank_import_click(self):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
         Dateianfang. Ablauf: Application ID einmalig abfragen (danach ueber
-        secrets_manager gemerkt), Land + Bank waehlen, dann im
-        Hintergrund-Thread (_BankAuthWorker) automatisch per lokalem
-        HTTP-Listener auf den Bank-Login-Redirect warten (siehe
-        enable_banking_client.authorize_and_create_session) - kein
-        manuelles Einfuegen eines Codes noetig."""
+        secrets_manager gemerkt), Land + Bank waehlen, dann Bank-Login im
+        Browser oeffnen (enable_banking_client.open_authorization) - die
+        registrierte REDIRECT_URL zeigt auf einen entfernten, selbst
+        betriebenen Server (nicht localhost), der Autorisierungs-Code kann
+        von hier aus also NICHT automatisch abgefangen werden. Der Nutzer
+        kopiert ihn nach dem Login manuell aus der Adresszeile."""
         from paperless_sync.core import secrets_manager
-        from paperless_sync.core.enable_banking_client import EnableBankingClient, EnableBankingError
+        from paperless_sync.core.enable_banking_client import EnableBankingClient, EnableBankingError, REDIRECT_URL, open_authorization
 
         application_id = secrets_manager.get_secret(self.app_state.base_dir, "enable_banking_application_id")
         if not application_id:
@@ -1260,22 +1231,33 @@ class DesktopAppQt(QMainWindow):
         if not ok:
             return
 
-        self._bank_import_client = client
-        self._bank_import_thread = QThread()
-        self._bank_import_worker = _BankAuthWorker(client, bank_name, country)
-        self._bank_import_worker.moveToThread(self._bank_import_thread)
-        self._bank_import_thread.started.connect(self._bank_import_worker.run)
-        self._bank_import_worker.finished.connect(self._on_bank_auth_finished)
-        self._bank_import_worker.finished.connect(self._bank_import_thread.quit)
-        QMessageBox.information(
+        try:
+            open_authorization(client, bank_name, country)
+        except EnableBankingError as exc:
+            QMessageBox.critical(self, tr("Fehler"), str(exc))
+            return
+
+        code, ok = QInputDialog.getText(
             self,
-            tr("Bank-Login"),
+            tr("Autorisierungs-Code"),
             tr(
-                "Der Standard-Browser oeffnet sich jetzt fuer den Bank-Login. Nach erfolgreichem Login "
-                "kehrt diese App automatisch zurueck (bis zu 5 Minuten Zeit)."
+                "Der Standard-Browser hat sich fuer den Bank-Login geoeffnet. Nach erfolgreichem Login "
+                "wirst du auf {url} weitergeleitet - kopiere den 'code'-Parameter aus der Adresszeile "
+                "und fuege ihn hier ein:",
+                url=REDIRECT_URL,
             ),
         )
-        self._bank_import_thread.start()
+        if not ok or not code.strip():
+            return
+
+        try:
+            session = client.create_session(code.strip())
+        except EnableBankingError as exc:
+            QMessageBox.critical(self, tr("Fehler"), str(exc))
+            return
+
+        self._bank_import_client = client
+        self._on_bank_auth_finished(session, None)
 
     def _on_bank_auth_finished(self, session, error):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe
