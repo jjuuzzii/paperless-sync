@@ -21,13 +21,16 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 - **Multi-document matching** — link several Paperless documents to a single transaction (e.g. a marketplace payout covering multiple invoices).
 - **mTLS client certificate support** — for Paperless instances behind something like Cloudflare Access with a PKCS#12 client certificate.
 - **Backup & restore** — one ZIP with settings, learned tags, credentials, and current work state; restorable on a new machine.
-- **Custom company logo** — replace the default icon with your own, shown in the sidebar and as the window/taskbar icon.
+- **Custom company logo** — replace the default paperclip icon at the top of the sidebar with your own (PNG).
+- **In-app PDF viewer** — preview linked or uploaded receipts without leaving the app.
 - **German / English UI** — switchable in Settings (restart required).
 - **Paperless success tag** — optionally tags matched documents back in Paperless itself, so the match status is visible/filterable there too.
 
-## Screenshots
+## Screenshot
 
-*(add screenshots to `docs/` and reference them here)*
+![Paperless Sync screenshot](docs/screenshot.png)
+
+*(shown with the bundled example CSV and placeholder data — no real transactions)*
 
 ## Installation
 
