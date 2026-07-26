@@ -1,0 +1,10 @@
+# Zusaetzliche Abhaengigkeiten NUR fuer die archivierten Legacy-Oberflaechen
+# (siehe legacy/README.md) - zusaetzlich zur Haupt-requirements.txt installieren:
+#   pip install -r requirements.txt -r legacy/requirements-legacy.txt
+
+# CustomTkinter-Desktop-UI (legacy/desktop_app.py)
+customtkinter>=5.2,<7.0
+tkinterdnd2>=0.3,<1.0
+
+# Streamlit-Weboberflaeche (legacy/app.py)
+streamlit>=1.32,<2.0
