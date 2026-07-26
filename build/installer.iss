@@ -4,18 +4,23 @@
 ; Deinstallation ueber "Apps & Features").
 ;
 ; Voraussetzung: PyInstaller-Build ist bereits aktuell
-;   (pyinstaller desktop_app_qt.spec --clean --noconfirm)
+;   (pyinstaller build/desktop_app_qt.spec --clean --noconfirm --workpath .pyinstaller-work)
 ;
 ; Kompilieren:
-;   "C:\Program Files\Inno Setup 7\ISCC.exe" installer.iss
+;   "C:\Program Files\Inno Setup 7\ISCC.exe" build/installer.iss
 ; Ergebnis:
 ;   installer_output\PaperlessSync-Setup-<Version>.exe
+;
+; Hinweis: Inno Setup loest relative Pfade unten relativ zum Ordner DIESER
+; Datei auf (build/), nicht relativ zum Aufrufverzeichnis - deshalb die
+; "..\"-Praefixe fuer alles, was im Repo-Root liegt. icon.ico liegt mit im
+; build/-Ordner und bleibt daher ohne Praefix.
 
 #define MyAppName "Paperless Sync"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "Perwein Hofgut"
 #define MyAppExeName "PaperlessSyncQt.exe"
-#define MyBuildDir "dist\PaperlessSyncQt"
+#define MyBuildDir "..\dist\PaperlessSyncQt"
 
 [Setup]
 AppId={{8F2C9A1E-4B7D-4E3A-9C6F-2D1A5B8E7F30}
@@ -25,7 +30,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=installer_output
+OutputDir=..\installer_output
 OutputBaseFilename=PaperlessSync-Setup-{#MyAppVersion}
 SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}

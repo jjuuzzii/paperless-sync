@@ -55,7 +55,7 @@ On first launch you'll be guided through a short setup: your Paperless-ngx URL a
 
 ```bash
 pip install -r requirements-build.txt
-python build.py
+python build/build.py
 ```
 
 This builds `dist/PaperlessSyncQt/PaperlessSyncQt.exe` via PyInstaller, and — if [Inno Setup](https://jrsoftware.org/isinfo.php) is installed — a Windows installer into `installer_output/`.

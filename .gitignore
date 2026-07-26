@@ -17,8 +17,10 @@ __pycache__/
 .venv/
 venv/
 
-# PyInstaller Build-Artefakte
-/build/
+# PyInstaller-Zwischen-Cache (NICHT der Ordner build/ - der enthaelt jetzt
+# die eigenen Build-Skripte/.spec-Dateien/installer.iss/icon.ico, siehe
+# build/build.py und dessen --workpath-Argument)
+/.pyinstaller-work/
 /dist/
 *.spec.bak
 

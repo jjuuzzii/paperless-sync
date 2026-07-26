@@ -1,10 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
+ARCHIVIERT/LEGACY - siehe legacy/README.md. Nicht mehr aktiv gepflegt, der
+normale Build-Prozess (build/build.py) referenziert nur noch
+desktop_app_qt.spec.
+
 PyInstaller-Spec-Datei fuer Paperless Sync (Streamlit-App als eigenstaendige
 Windows-.exe, onedir-Modus - empfohlen fuer Streamlit-Apps).
 
-Build-Befehl:
-    pyinstaller paperless_sync.spec --clean --noconfirm
+Build-Befehl (Aufrufverzeichnis egal - Pfade in dieser Datei sind relativ
+zu SPECPATH aufgeloest, siehe build/build.py fuer Details zu --workpath):
+    pyinstaller build/paperless_sync.spec --clean --noconfirm --workpath .pyinstaller-work
 
 Ergebnis:
     dist/PaperlessSync/PaperlessSync.exe
@@ -12,9 +17,16 @@ Ergebnis:
     zur Laufzeit dort gelesen/geschrieben - siehe config_manager.get_base_dir)
 """
 
+import os
+
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# WICHTIG: Pfade sind relativ zum Ordner DIESER Spec-Datei aufzuloesen
+# (PyInstaller nutzt dafuer nicht das Aufrufverzeichnis) - SPECPATH stellt
+# PyInstaller automatisch im Exec-Namespace der Spec-Datei bereit.
+REPO_ROOT = os.path.join(SPECPATH, "..")
 
 datas = []
 binaries = []
@@ -37,23 +49,25 @@ for pkg in ("streamlit", "cryptography"):
     hiddenimports += pkg_hidden
 
 # App-Quellcode + Laufzeit-Konfiguration, die Streamlit/die App selbst aus
-# dem gebuendelten Verzeichnis lesen muss.
+# dem gebuendelten Verzeichnis lesen muss. app.py liegt im Quellcode jetzt
+# in legacy/, landet im Bundle aber weiterhin flach im Root ("."), damit
+# run_app.py.resolve_app_path() (frozen-Zweig) unveraendert funktioniert.
 datas += [
-    ("app.py", "."),
-    ("config_manager.py", "."),
-    ("csv_utils.py", "."),
-    ("session_store.py", "."),
-    ("paperless_client.py", "."),
-    ("matcher.py", "."),
-    ("exporter.py", "."),
-    ("config.json", "."),
-    (".env", "."),
-    ("input/beispiel_kontoauszug.csv", "input"),
+    (os.path.join(REPO_ROOT, "legacy", "app.py"), "."),
+    (os.path.join(REPO_ROOT, "config_manager.py"), "."),
+    (os.path.join(REPO_ROOT, "csv_utils.py"), "."),
+    (os.path.join(REPO_ROOT, "session_store.py"), "."),
+    (os.path.join(REPO_ROOT, "paperless_client.py"), "."),
+    (os.path.join(REPO_ROOT, "matcher.py"), "."),
+    (os.path.join(REPO_ROOT, "exporter.py"), "."),
+    (os.path.join(REPO_ROOT, "config.json"), "."),
+    (os.path.join(REPO_ROOT, ".env"), "."),
+    (os.path.join(REPO_ROOT, "input", "beispiel_kontoauszug.csv"), "input"),
 ]
 
 a = Analysis(
-    ["run_app.py"],
-    pathex=[],
+    [os.path.join(REPO_ROOT, "run_app.py")],
+    pathex=[REPO_ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

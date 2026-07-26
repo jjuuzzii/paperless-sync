@@ -24,9 +24,9 @@ Paperless Sync ist ein Windows-Desktop-Tool (PySide6/Qt), das Banktransaktionen 
 | `tx_status.py` | Zentrale Transaktions-Status-Werte (siehe unten) |
 | `version.py` | Zentrale Versionsnummer (`__version__`) |
 
-Ältere Oberflächen (`desktop_app.py`, CustomTkinter; `app.py`, Streamlit) liegen noch im Repo als Fallback, sind aber nicht mehr der Haupt-Entwicklungspfad — Änderungen daran nur auf ausdrücklichen Wunsch.
+Ältere Oberflächen (CustomTkinter, Streamlit) sind nach `legacy/` archiviert, siehe `legacy/README.md` — nicht mehr aktiv gepflegt, Änderungen daran nur auf ausdrücklichen Wunsch.
 
-Build: `python build.py` (PyInstaller + Inno-Setup-Installer, siehe `build.py`-Docstring für Details und ältere Build-Varianten).
+Build: `python build/build.py` (PyInstaller + Inno-Setup-Installer, siehe `build/build.py`-Docstring für Details und ältere Build-Varianten).
 
 ## Arbeitsweise
 
