@@ -8,8 +8,8 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from config_manager import PLACEHOLDER_TOKEN, csv_signature as compute_csv_signature
-from paperless_client import PaperlessClient
+from paperless_sync.core.config_manager import PLACEHOLDER_TOKEN, csv_signature as compute_csv_signature
+from paperless_sync.core.paperless_client import PaperlessClient
 from icon_utils import apply_window_icon
 from ctk_fixes import LeakSafeScrollableFrame
 from theme import COLORS, FONT_SUBTITLE

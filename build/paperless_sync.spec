@@ -52,14 +52,22 @@ for pkg in ("streamlit", "cryptography"):
 # dem gebuendelten Verzeichnis lesen muss. app.py liegt im Quellcode jetzt
 # in legacy/, landet im Bundle aber weiterhin flach im Root ("."), damit
 # run_app.py.resolve_app_path() (frozen-Zweig) unveraendert funktioniert.
+# Die Core-Backend-Module liegen jetzt unter src/paperless_sync/core/ -
+# muessen inkl. beider __init__.py als echtes Package ins Bundle, sonst
+# schlaegt app.py's "from paperless_sync.core.xxx import ..." zur
+# Laufzeit fehl (der Bundle-Root liegt bei einem frozen Onedir-Build
+# automatisch auf sys.path).
 datas += [
     (os.path.join(REPO_ROOT, "legacy", "app.py"), "."),
-    (os.path.join(REPO_ROOT, "config_manager.py"), "."),
-    (os.path.join(REPO_ROOT, "csv_utils.py"), "."),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "__init__.py"), "paperless_sync"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "__init__.py"), "paperless_sync/core"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "config_manager.py"), "paperless_sync/core"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "csv_utils.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "session_store.py"), "."),
-    (os.path.join(REPO_ROOT, "paperless_client.py"), "."),
-    (os.path.join(REPO_ROOT, "matcher.py"), "."),
-    (os.path.join(REPO_ROOT, "exporter.py"), "."),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "paperless_client.py"), "paperless_sync/core"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "matcher.py"), "paperless_sync/core"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "exporter.py"), "paperless_sync/core"),
+    (os.path.join(REPO_ROOT, "src", "paperless_sync", "core", "backup.py"), "paperless_sync/core"),
     (os.path.join(REPO_ROOT, "config.json"), "."),
     (os.path.join(REPO_ROOT, ".env"), "."),
     (os.path.join(REPO_ROOT, "input", "beispiel_kontoauszug.csv"), "input"),
@@ -67,7 +75,7 @@ datas += [
 
 a = Analysis(
     [os.path.join(REPO_ROOT, "run_app.py")],
-    pathex=[REPO_ROOT],
+    pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "src")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

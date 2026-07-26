@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
@@ -42,12 +43,19 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
+# Core-Backend-Module (config_manager, i18n, ...) leben in
+# src/paperless_sync/core/ - src/ muss auf den Suchpfad, BEVOR die
+# folgenden lokalen Imports ausgefuehrt werden: desktop_state/
+# desktop_controller/dialogs_qt importieren transitiv selbst aus
+# paperless_sync.core.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
 from desktop_state import AppState
 from desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
 from dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
-from config_manager import get_resource_dir
+from paperless_sync.core.config_manager import get_resource_dir
 from theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
-from i18n import tr, set_language
+from paperless_sync.core.i18n import tr, set_language
 from version import __version__
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im

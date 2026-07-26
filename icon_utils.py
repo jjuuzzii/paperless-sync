@@ -20,7 +20,7 @@ import sys
 
 from PIL import Image, ImageTk
 
-from config_manager import get_resource_dir
+from paperless_sync.core.config_manager import get_resource_dir
 
 # PhotoImage-Objekte werden von Tk nur per Referenz gehalten - ohne eine
 # Python-seitige Referenz wuerden sie vom Garbage Collector eingesammelt und

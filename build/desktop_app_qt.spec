@@ -33,7 +33,10 @@ if has_icon:
 
 a = Analysis(
     [os.path.join(REPO_ROOT, "desktop_app_qt.py")],
-    pathex=[REPO_ROOT],
+    # REPO_ROOT fuer desktop_app_qt.py/desktop_state.py/desktop_controller.py,
+    # zusaetzlich src/ fuer die Core-Backend-Module (paperless_sync.core.*),
+    # die desktop_app_qt.py transitiv importiert.
+    pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "src")],
     binaries=[],
     datas=datas,
     hiddenimports=[],

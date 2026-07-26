@@ -66,8 +66,9 @@ a = Analysis(
     # REPO_ROOT muss explizit rein: das Einstiegsskript liegt in legacy/,
     # PyInstaller durchsucht standardmaessig aber nur dessen eigenen Ordner,
     # nicht automatisch das Elternverzeichnis - dort liegen
-    # desktop_state.py/desktop_controller.py/icon_utils.py.
-    pathex=[REPO_ROOT],
+    # desktop_state.py/desktop_controller.py/icon_utils.py. src/ zusaetzlich
+    # fuer die Core-Backend-Module (paperless_sync.core.*).
+    pathex=[REPO_ROOT, os.path.join(REPO_ROOT, "src")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

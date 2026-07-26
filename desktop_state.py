@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from config_manager import (
+from paperless_sync.core.config_manager import (
     get_base_dir,
     get_resource_dir,
     seed_default_files,
@@ -19,7 +19,7 @@ from config_manager import (
     csv_signature as compute_csv_signature,
 )
 from session_store import save_session, load_session
-from paperless_client import PaperlessClient
+from paperless_sync.core.paperless_client import PaperlessClient
 
 SUCCESS_STATUSES = ("matched", "tagged", "uploaded")
 

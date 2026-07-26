@@ -9,10 +9,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from csv_utils import read_csv_raw
-from matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
-from exporter import generate_export
-from config_manager import csv_signature as compute_csv_signature
+from paperless_sync.core.csv_utils import read_csv_raw
+from paperless_sync.core.matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
+from paperless_sync.core.exporter import generate_export
+from paperless_sync.core.config_manager import csv_signature as compute_csv_signature
 
 BUILTIN_TAGS = ["PRIVAT", "EINZAHLUNG", "UMBUCHUNG"]
 TAG_ICONS = {"PRIVAT": "🔒", "EINZAHLUNG": "💰", "UMBUCHUNG": "🔄"}

@@ -79,7 +79,9 @@ def get_base_dir() -> Path:
     """Basisordner fuer Nutzerdaten. Als installierte .exe: %APPDATA%\\
     PaperlessSync (Program Files ist i.d.R. nicht ohne Adminrechte
     beschreibbar und nicht der vorgesehene Ort fuer Nutzerdaten). Im
-    Quellcode-Betrieb: Projektordner."""
+    Quellcode-Betrieb: Projektordner (Repo-Root, NICHT dieser core/-Ordner -
+    diese Datei liegt unter src/paperless_sync/core/, parents[3] geht
+    core/ -> paperless_sync/ -> src/ -> Repo-Root)."""
     if getattr(sys, "frozen", False):
         appdata = os.environ.get("APPDATA")
         if appdata:
@@ -87,7 +89,7 @@ def get_base_dir() -> Path:
             base.mkdir(parents=True, exist_ok=True)
             return base
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parents[3]
 
 
 def get_resource_dir() -> Path:

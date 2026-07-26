@@ -26,8 +26,12 @@ import tkinterdnd2
 # desktop_state/desktop_controller/icon_utils liegen (noch) im Repo-Root,
 # dieses Skript aber in legacy/ - Root-Verzeichnis muss deshalb explizit
 # auf den Suchpfad (dialogs/ctk_fixes/theme bleiben Geschwisterdateien in
-# legacy/ und brauchen das nicht).
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# legacy/ und brauchen das nicht). src/ zusaetzlich, weil desktop_state/
+# desktop_controller/dialogs/icon_utils transitiv aus paperless_sync.core
+# importieren.
+_repo_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo_root))
+sys.path.insert(0, str(_repo_root / "src"))
 
 from desktop_state import AppState
 from desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS

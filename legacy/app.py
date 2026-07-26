@@ -16,13 +16,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# Die geteilten Backend-Module (config_manager, csv_utils, ...) liegen
-# (noch) im Repo-Root, dieses Skript aber in legacy/ - Root-Verzeichnis
-# muss deshalb explizit auf den Suchpfad, sonst schlagen die folgenden
-# Imports fehl.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# session_store.py liegt (noch) im Repo-Root, dieses Skript aber in
+# legacy/ - Root-Verzeichnis muss deshalb explizit auf den Suchpfad. src/
+# zusaetzlich fuer die Core-Backend-Module (config_manager, csv_utils, ...),
+# die jetzt unter src/paperless_sync/core/ liegen.
+_repo_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo_root))
+sys.path.insert(0, str(_repo_root / "src"))
 
-from config_manager import (
+from paperless_sync.core.config_manager import (
     get_base_dir,
     get_resource_dir,
     seed_default_files,
@@ -34,12 +36,12 @@ from config_manager import (
     csv_signature,
     PLACEHOLDER_TOKEN,
 )
-from csv_utils import read_csv_raw, detect_encoding_and_delimiter
-from paperless_client import PaperlessClient
-from matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
-from exporter import generate_export
+from paperless_sync.core.csv_utils import read_csv_raw, detect_encoding_and_delimiter
+from paperless_sync.core.paperless_client import PaperlessClient
+from paperless_sync.core.matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
+from paperless_sync.core.exporter import generate_export
 from session_store import save_session, load_session
-from backup import create_backup, restore_backup, backup_filename
+from paperless_sync.core.backup import create_backup, restore_backup, backup_filename
 
 BASE_DIR = get_base_dir()
 seed_default_files(BASE_DIR, get_resource_dir())
