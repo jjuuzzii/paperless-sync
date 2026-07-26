@@ -1,15 +1,26 @@
 """Paperless Sync - automatischer Abgleich zwischen Paperless-ngx und einem
 Bank-CSV-Kontoauszug fuer eine luecken lose Steuer-Beleg-Zuordnung.
 
-Start (Quellcode):  streamlit run app.py
+ARCHIVIERT: alte Streamlit-Oberflaeche, nicht mehr aktiv gepflegt - siehe
+legacy/README.md. Aktuelle Oberflaeche: desktop_app_qt.py im Repo-Root.
+
+Start (Quellcode):  streamlit run legacy/app.py
 """
 from __future__ import annotations
 
 import io
 import re
+import sys
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+# Die geteilten Backend-Module (config_manager, csv_utils, ...) liegen
+# (noch) im Repo-Root, dieses Skript aber in legacy/ - Root-Verzeichnis
+# muss deshalb explizit auf den Suchpfad, sonst schlagen die folgenden
+# Imports fehl.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config_manager import (
     get_base_dir,

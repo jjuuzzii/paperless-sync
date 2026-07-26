@@ -1,21 +1,33 @@
 """Paperless Sync - Desktop-UI (CustomTkinter + natives Drag & Drop).
 
+ARCHIVIERT: durch die Qt-Oberflaeche abgeloest, nicht mehr aktiv gepflegt -
+siehe legacy/README.md. Aktuelle Oberflaeche: desktop_app_qt.py im
+Repo-Root.
+
 Reine UI-Schicht: alle Geschaeftslogik lebt in desktop_controller.py /
 desktop_state.py und den bestehenden Backend-Modulen (matcher.py,
 paperless_client.py, exporter.py, csv_utils.py, config_manager.py,
 session_store.py). Diese Datei ruft nur Controller-Methoden auf und
 rendert danach neu.
 
-Start (Quellcode):  python desktop_app.py
+Start (Quellcode):  python legacy/desktop_app.py
 """
 from __future__ import annotations
 
 import re
+import sys
 import threading
+from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import tkinterdnd2
+
+# desktop_state/desktop_controller/icon_utils liegen (noch) im Repo-Root,
+# dieses Skript aber in legacy/ - Root-Verzeichnis muss deshalb explizit
+# auf den Suchpfad (dialogs/ctk_fixes/theme bleiben Geschwisterdateien in
+# legacy/ und brauchen das nicht).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from desktop_state import AppState
 from desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
