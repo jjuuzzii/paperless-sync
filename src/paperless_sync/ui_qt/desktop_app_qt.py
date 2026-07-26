@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QLineEdit,
+    QInputDialog,
 )
 
 # sys.path (Repo-Root + src/) wird vom Einstiegspunkt (run_app.py) VOR dem
