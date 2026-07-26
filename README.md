@@ -1,8 +1,10 @@
 # Paperless Sync
 
-A Windows desktop tool that reconciles a bank statement CSV against documents stored in [Paperless-ngx](https://docs.paperless-ngx.com/), so every transaction ends up with a matching receipt — built for gap-free bookkeeping records for tax purposes (accountant-ready exports included).
+A desktop tool that reconciles a bank statement CSV against documents stored in [Paperless-ngx](https://docs.paperless-ngx.com/), so every transaction ends up with a matching receipt — built for gap-free bookkeeping records for tax purposes (accountant-ready exports included).
 
-![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![python](https://img.shields.io/badge/python-3.12-blue)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![python](https://img.shields.io/badge/python-3.12-blue)
+
+Built and released for Windows; the underlying app (PySide6/Qt) runs cross-platform and macOS/Linux build paths exist, but they haven't been verified on real hardware yet — see [Installation](#installation) below.
 
 ## What it does
 
@@ -38,7 +40,15 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 
 Download the latest installer from the [Releases](../../releases) page and run it. `Paperless Sync` will appear in your Start menu.
 
-### From source
+### macOS
+
+No packaged release yet — build and run from source (see below). Requires Python 3.12+ (`brew install python@3.12` if you don't have it). The `.app`-bundle build path (`build/desktop_app_qt_macos.spec`) exists but is untested on real hardware; without code signing, Gatekeeper will likely flag the built app as being from an unverified developer, similar to the Windows Smart App Control situation.
+
+### Linux
+
+No packaged release yet — build and run from source (see below). Requires Python 3.12+ and the usual Qt runtime libraries for your distro (most desktop environments already have these; if PySide6 fails to start, install your distro's `libxcb`/Qt platform plugin packages). The onefile build path (`build/desktop_app_qt_linux.spec`) exists but is untested on real hardware.
+
+### From source (any platform)
 
 Requires Python 3.12+.
 
@@ -51,14 +61,18 @@ python run_app.py
 
 On first launch you'll be guided through a short setup: your Paperless-ngx URL and API token, and how invoice amounts should be detected.
 
-## Building the Windows executable
+## Building the executable
 
 ```bash
 pip install -r requirements-build.txt
 python build/build.py
 ```
 
-This builds `dist/PaperlessSyncQt/PaperlessSyncQt.exe` via PyInstaller, and — if [Inno Setup](https://jrsoftware.org/isinfo.php) is installed — a Windows installer into `installer_output/`.
+`build/build.py` detects the current platform and picks the matching PyInstaller spec automatically:
+
+- **Windows**: `dist/PaperlessSyncQt/PaperlessSyncQt.exe`, and — if [Inno Setup](https://jrsoftware.org/isinfo.php) is installed — a Windows installer into `installer_output/`. This is the only path that's actually been built and run end-to-end.
+- **macOS**: `dist/PaperlessSyncQt.app` — untested, see the macOS note above.
+- **Linux**: `dist/PaperlessSyncQt` (single executable) — untested, see the Linux note above.
 
 ## Configuration
 
@@ -70,7 +84,7 @@ All settings are reachable from the "⚙️ Settings" button in the app — no m
 - **CSV column mapping** — which columns hold date/amount/purpose/sender
 - **Custom tags, noise terms, backup/restore, language, company logo**
 
-User data (config, credentials, session state) lives in `%APPDATA%\PaperlessSync` when running the installed `.exe`, and next to the source files when run from source.
+User data (config, credentials, session state) lives in the platform-standard per-user app data location when running a built app — Windows: `%APPDATA%\PaperlessSync`, macOS: `~/Library/Application Support/PaperlessSync`, Linux: `~/.config/PaperlessSync` — and next to the source files when run from source.
 
 ## Architecture
 
