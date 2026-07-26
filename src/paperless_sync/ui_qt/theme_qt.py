@@ -4,7 +4,9 @@ aussehen. Getrennte Datei, weil Qt Farben/Schrift ueber QSS-Stylesheets bzw.
 QFont statt CTk-kwargs setzt."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QComboBox
 
 COLORS = {
     "bg_main": "#1e1e2e",
@@ -78,3 +80,25 @@ FONT_PURPOSE_SECONDARY_SIZE = 10
 FONT_AMOUNT_SIZE = 20
 FONT_KPI_NUMBER_SIZE = 28
 FONT_KPI_TITLE_SIZE = 10
+
+
+class NoScrollComboBox(QComboBox):
+    """QComboBox aendert per Default seinen Wert, sobald man mit dem
+    Mausrad darueber scrollt - auch ohne vorherigen Klick. In einem
+    scrollbaren Dialog (z.B. SettingsDialog) fuehrt normales Scrollen so
+    versehentlich zum Verstellen von Einstellungen. Ignoriert
+    Mausrad-Events, solange die Combobox keinen Fokus hat (das Event geht
+    dann an den Eltern-Scrollbereich weiter) - nach einem Klick/Tab in die
+    Combobox funktioniert Scrollen zum Werte-Wechsel wie gewohnt.
+    StrongFocus statt des QComboBox-Defaults, damit ein voruebergehendes
+    Ueberscrollen selbst nicht schon Fokus setzt."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)

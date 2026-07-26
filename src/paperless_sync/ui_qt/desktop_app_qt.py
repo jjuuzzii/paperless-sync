@@ -49,7 +49,7 @@ from paperless_sync.state.desktop_state import AppState
 from paperless_sync.state.desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
 from .dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
 from paperless_sync.core.config_manager import get_resource_dir
-from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
+from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
 from paperless_sync.core.exporter import count_open_items
@@ -393,7 +393,7 @@ class DesktopAppQt(QMainWindow):
         layout.addSpacing(20)
 
         layout.addWidget(self._section_label(tr("2 · MONAT")))
-        self.month_combo = QComboBox()
+        self.month_combo = NoScrollComboBox()
         self.month_combo.setStyleSheet(
             f"QComboBox {{ background-color: {COLORS['bg_card']}; color: {COLORS['text_primary']}; "
             f"border-radius: 10px; padding: 8px; border: none; }}"
@@ -885,7 +885,7 @@ class DesktopAppQt(QMainWindow):
     def _build_ambiguous_picker(self, outer: QVBoxLayout, tx: dict):
         candidates = tx.get("candidate_docs") or []
         row = QHBoxLayout()
-        combo = QComboBox()
+        combo = NoScrollComboBox()
         combo.setStyleSheet(
             f"QComboBox {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
             f"border-radius: 10px; padding: 8px; border: none; }}"
@@ -951,7 +951,7 @@ class DesktopAppQt(QMainWindow):
 
         other_tags = [t for t in self.app_state.config.get("custom_tags", {}) if t not in promoted]
         sonstiges_row = QHBoxLayout()
-        combo = QComboBox()
+        combo = NoScrollComboBox()
         combo.setEditable(True)
         combo.setStyleSheet(
             f"QComboBox {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "

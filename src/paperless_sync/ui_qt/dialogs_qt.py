@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from paperless_sync.core.backup import create_backup, restore_backup, backup_filename
 from paperless_sync.core.config_manager import get_resource_dir, csv_signature as compute_csv_signature, PLACEHOLDER_TOKEN
 from paperless_sync.core.paperless_client import PaperlessClient
-from .theme_qt import COLORS, font as qfont
+from .theme_qt import COLORS, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language, get_language
 
 
@@ -227,7 +227,7 @@ class SettingsDialog(QDialog):
         self.custom_field_label = QLabel(tr("Custom Field mit Rechnungsbetrag"))
         self.custom_field_label.setStyleSheet("border: none;")
         detect_card.layout().addWidget(self.custom_field_label)
-        self.custom_field_combo = QComboBox()
+        self.custom_field_combo = NoScrollComboBox()
         self.custom_field_combo.setEditable(True)
         self.custom_field_combo.setStyleSheet(_combo_style())
         if detection.get("custom_field_name"):
@@ -329,7 +329,7 @@ class SettingsDialog(QDialog):
             tr("Sprache der Oberflaeche. Wirkt erst nach einem Neustart der App."),
         )
         lang_row = QHBoxLayout()
-        self.lang_combo = QComboBox()
+        self.lang_combo = NoScrollComboBox()
         self.lang_combo.setStyleSheet(_combo_style())
         self.lang_combo.addItems(["Deutsch", "English"])
         self.lang_combo.setCurrentText("English" if get_language() == "en" else "Deutsch")
@@ -427,7 +427,7 @@ class SettingsDialog(QDialog):
         lbl = QLabel(label)
         lbl.setStyleSheet("border: none;")
         parent_card.layout().addWidget(lbl)
-        combo = QComboBox()
+        combo = NoScrollComboBox()
         combo.setStyleSheet(_combo_style())
         combo.addItems(values)
         if current and current in values:
@@ -716,28 +716,28 @@ class MappingDialog(QDialog):
         layout.setSpacing(4)
 
         layout.addWidget(QLabel(tr("Spalte fuer Datum")))
-        self.date_combo = QComboBox()
+        self.date_combo = NoScrollComboBox()
         self.date_combo.setStyleSheet(_combo_style())
         self.date_combo.addItems(columns)
         layout.addWidget(self.date_combo)
         layout.addSpacing(8)
 
         layout.addWidget(QLabel(tr("Spalte fuer Betrag")))
-        self.amount_combo = QComboBox()
+        self.amount_combo = NoScrollComboBox()
         self.amount_combo.setStyleSheet(_combo_style())
         self.amount_combo.addItems(columns)
         layout.addWidget(self.amount_combo)
         layout.addSpacing(8)
 
         layout.addWidget(QLabel(tr("Spalte fuer Verwendungszweck")))
-        self.purpose_combo = QComboBox()
+        self.purpose_combo = NoScrollComboBox()
         self.purpose_combo.setStyleSheet(_combo_style())
         self.purpose_combo.addItems(columns)
         layout.addWidget(self.purpose_combo)
         layout.addSpacing(8)
 
         layout.addWidget(QLabel(tr("Spalte fuer Absender/Empfaenger (optional)")))
-        self.counterparty_combo = QComboBox()
+        self.counterparty_combo = NoScrollComboBox()
         self.counterparty_combo.setStyleSheet(_combo_style())
         counterparty_values = [_none_option()] + columns
         self.counterparty_combo.addItems(counterparty_values)
