@@ -38,15 +38,7 @@ def build_transactions(df, mapping: dict) -> list[dict]:
             }
         )
 
-    records.sort(key=lambda r: r["date"])
-
-    transactions = []
-    month_counters: dict[str, int] = {}
-    for i, r in enumerate(records, start=1):
-        r["id"] = f"{i:03d}"  # global eindeutig - interner Schluessel fuer alle Lookups/Klicks, NICHT anzeigen
-        month_key = r["date"].strftime("%Y-%m")
-        month_counters[month_key] = month_counters.get(month_key, 0) + 1
-        r["display_number"] = f"{month_counters[month_key]:03d}"  # 1..X je Monat - das sieht der Nutzer (Karte/Export)
+    for r in records:
         r["status"] = TxStatus.UNRESOLVED  # siehe tx_status.TxStatus
         r["note"] = ""
         r["tag"] = None  # gesetzt, wenn status == "tagged" (PRIVAT/EINZAHLUNG/UMBUCHUNG/eigener Tag)
@@ -55,8 +47,26 @@ def build_transactions(df, mapping: dict) -> list[dict]:
         r["candidate_docs"] = None  # bei status == MULTI_MATCH: Liste der mehrdeutigen Kandidaten
         r["uploaded_bytes"] = None
         r["uploaded_name"] = None
-        transactions.append(r)
-    return transactions
+
+    renumber_transactions(records)
+    return records
+
+
+def renumber_transactions(transactions: list[dict]) -> None:
+    """Vergibt id (global fortlaufend, dreistellig) und display_number
+    (1..X je Kalendermonat) neu, in-place, chronologisch sortiert -
+    unveraendert die gleiche Logik wie zuvor in build_transactions(), jetzt
+    auch fuer desktop_controller.on_external_import() nutzbar (neu vom
+    Bank-Import hinzugefuegte Transaktionen muessen sich nahtlos in die
+    bestehende Nummerierung einreihen). Aendert NUR id/display_number -
+    status/tags/matched_docs bestehender Eintraege bleiben unangetastet."""
+    transactions.sort(key=lambda r: r["date"])
+    month_counters: dict[str, int] = {}
+    for i, r in enumerate(transactions, start=1):
+        r["id"] = f"{i:03d}"  # global eindeutig - interner Schluessel fuer alle Lookups/Klicks, NICHT anzeigen
+        month_key = r["date"].strftime("%Y-%m")
+        month_counters[month_key] = month_counters.get(month_key, 0) + 1
+        r["display_number"] = f"{month_counters[month_key]:03d}"  # 1..X je Monat - das sieht der Nutzer (Karte/Export)
 
 
 def parse_paperless_date(value):

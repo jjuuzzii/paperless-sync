@@ -1385,8 +1385,13 @@ class DesktopAppQt(QMainWindow):
             return
 
         df = transactions_to_dataframe(raw_txs)
-        self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
+        added_count = self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
         self.render()
+        skipped = len(raw_txs) - added_count
+        message = tr("{added} neue Buchung(en) hinzugefuegt.", added=added_count)
+        if skipped:
+            message += "\n" + tr("{skipped} bereits vorhandene Buchung(en) uebersprungen (Duplikat).", skipped=skipped)
+        QMessageBox.information(self, tr("Import abgeschlossen"), message)
 
     def _on_mapping_confirmed(self, date_col, amount_col, purpose_col, counterparty_col=None):
         try:

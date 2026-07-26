@@ -213,8 +213,14 @@ def _build_einzahlungen_csv(month_transactions: list[dict], csv_delimiter: str) 
 def _build_kontoauszug_csv(month_transactions: list[dict], csv_df, csv_delimiter: str) -> bytes:
     """03_Kontoauszug_gefiltert.csv - die Original-Bank-CSV, gefiltert auf
     die Buchungen dieses Exports (Anforderung 5), in der urspruenglichen
-    Zeilenreihenfolge."""
-    row_indices = sorted(t["row_index"] for t in month_transactions)
+    Zeilenreihenfolge. row_index fehlt (None) bei Buchungen, die nicht aus
+    einer hochgeladenen CSV stammen (z.B. ueber eine Bank-API ergaenzt,
+    siehe desktop_controller.on_external_import) - die gehoeren per
+    Definition nicht in eine "gefilterte Original-CSV" und werden hier
+    uebersprungen."""
+    row_indices = sorted(t["row_index"] for t in month_transactions if t.get("row_index") is not None)
+    if not row_indices:
+        return "".encode("utf-8-sig")
     filtered_df = csv_df.loc[row_indices].copy()
     csv_text = filtered_df.to_csv(sep=csv_delimiter, index=False, lineterminator="\n")
     return csv_text.encode("utf-8-sig")

@@ -11,7 +11,12 @@ from datetime import datetime
 from pathlib import Path
 
 from paperless_sync.core.csv_utils import read_csv_raw
-from paperless_sync.core.matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
+from paperless_sync.core.matcher import (
+    build_transactions,
+    renumber_transactions,
+    fetch_and_prepare_paperless_docs,
+    match_transactions,
+)
 from paperless_sync.core.exporter import generate_export
 from paperless_sync.core.config_manager import csv_signature as compute_csv_signature
 from paperless_sync.core.tx_status import TxStatus
@@ -103,27 +108,48 @@ class Controller:
         state.matched_once = False
         state.persist_session()
 
-    def on_external_import(self, df, mapping: dict) -> None:
+    def on_external_import(self, df, mapping: dict) -> int:
         """Importiert Transaktionen aus einem bereits fertigen DataFrame mit
-        bekanntem Spalten-Mapping - identisch zu on_mapping_confirm(), nur
-        ohne den Umweg ueber eine hochgeladene CSV-Datei (kein
-        csv_columns/Datei-Signatur-Konzept anwendbar, das Mapping wird auch
-        NICHT in config['csv_mappings'] gemerkt, da es sich nicht auf ein
-        wiederkehrendes CSV-Spaltenlayout bezieht). Fuer jede Datenquelle
-        nutzbar, die dieselbe Tabellenform wie eine Bank-CSV liefert (Datum/
-        Betrag/Verwendungszweck/[Gegenpartei])."""
+        bekanntem Spalten-Mapping - FUEGT sie zu den bestehenden hinzu,
+        anders als on_mapping_confirm() (CSV-Upload), das state.transactions
+        komplett ersetzt. Fuer eine ERGAENZENDE Datenquelle (z.B. ein
+        Bank-API-Import zusaetzlich zu einer bereits geladenen/bearbeiteten
+        CSV) waere Ersetzen fatal: jede bereits geleistete Zuordnungs-/
+        Tag-Arbeit ginge verloren (genau das ist einmal passiert, siehe
+        Chat).
+
+        Duplikat-Schutz: eine "neue" Buchung gilt als bereits vorhanden,
+        wenn Datum+Betrag+Verwendungszweck exakt uebereinstimmen (z.B. bei
+        ueberlappenden Zeitraeumen von CSV- und Bank-Import) - nur echte
+        Neuzugaenge werden angehaengt. id/display_number werden fuer die
+        komplette, gemergte Liste neu vergeben (siehe
+        matcher.renumber_transactions), Status/Tags/Matches bestehender
+        Eintraege bleiben dabei unangetastet.
+
+        row_index bewusst auf None gesetzt (nicht die Position im
+        uebergebenen df): state.csv_df/pending_mapping/csv_columns
+        repraesentieren weiterhin nur die urspruenglich hochgeladene CSV
+        und werden hier NICHT veraendert - row_index=None wird von
+        reapply_counterparty_mapping() und beim gefilterten CSV-Export
+        (exporter._build_kontoauszug_csv) korrekt als 'keine CSV-Quelle'
+        behandelt.
+
+        Gibt die Anzahl tatsaechlich neu hinzugefuegter (nicht
+        doppelter) Transaktionen zurueck."""
         state = self.state
-        state.csv_df = df
-        state.csv_columns = list(df.columns)
-        state.csv_signature = f"external_{len(df)}_{datetime.now().isoformat()}"
-        state.csv_delimiter = ","
-        state.csv_encoding = "utf-8"
-        state.pending_mapping = mapping
-        state.mapping_confirmed = True
-        state.transactions = build_transactions(df, mapping)
-        self.suggest_learned_tags()
-        state.matched_once = False
-        state.persist_session()
+        new_transactions = build_transactions(df, mapping)
+        for t in new_transactions:
+            t["row_index"] = None
+
+        existing_keys = {(t["date"], t["amount_raw"], t["purpose"]) for t in state.transactions}
+        added = [t for t in new_transactions if (t["date"], t["amount_raw"], t["purpose"]) not in existing_keys]
+
+        if added:
+            state.transactions = state.transactions + added
+            renumber_transactions(state.transactions)
+            self.suggest_learned_tags()
+            state.persist_session()
+        return len(added)
 
     # --- Paperless-Abgleich ------------------------------------------------
     def on_match_click(self) -> int:
