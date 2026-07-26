@@ -17,7 +17,7 @@
 ; build/-Ordner und bleibt daher ohne Praefix.
 
 #define MyAppName "Paperless Sync"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Perwein Hofgut"
 #define MyAppExeName "PaperlessSyncQt.exe"
 #define MyBuildDir "..\dist\PaperlessSyncQt"

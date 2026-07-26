@@ -103,6 +103,6 @@ app = BUNDLE(
     bundle_identifier="com.perweinhofgut.paperlesssync",
     info_plist={
         "NSHighResolutionCapable": "True",
-        "CFBundleShortVersionString": "1.1.0",
+        "CFBundleShortVersionString": "1.2.0",
     },
 )
