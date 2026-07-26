@@ -24,6 +24,26 @@ from paperless_sync.core.tx_status import TxStatus
 BUILTIN_TAGS = ["PRIVAT", "EINZAHLUNG", "UMBUCHUNG"]
 TAG_ICONS = {"PRIVAT": "🔒", "EINZAHLUNG": "💰", "UMBUCHUNG": "🔄"}
 
+# Heuristik fuer eine Spalte mit der EIGENEN Kontonummer/IBAN (nicht die
+# des Zahlungsbeteiligten) - fuer eine Warnung, falls beim Nachladen einer
+# weiteren CSV ploetzlich ein anderes Konto drin zu stehen scheint (z.B.
+# aus Versehen den falschen Kontoauszug gewaehlt). Best-effort: viele
+# Bank-Exportformate haben so eine Spalte gar nicht, dann gibt es keine
+# Warnung (kein Fehlalarm, aber auch kein Schutz).
+_ACCOUNT_ID_COLUMN_HINTS = ("iban auftragskonto", "kontonummer auftragskonto", "iban", "kontonummer", "konto")
+
+
+def _find_account_identifier(df, columns) -> str | None:
+    for hint in _ACCOUNT_ID_COLUMN_HINTS:
+        for col in columns:
+            col_lower = str(col).lower()
+            if hint in col_lower and "beteiligt" not in col_lower:
+                values = df[col].dropna().astype(str).str.strip()
+                values = values[values != ""]
+                if not values.empty:
+                    return values.iloc[0]
+    return None
+
 
 class _BytesUpload:
     """Adapter, damit csv_utils.read_csv_raw (erwartet ein Objekt mit
@@ -51,27 +71,76 @@ class Controller:
         self.state = state
         self._success_tag_id_cache: int | None = None
 
+    def _merge_new_transactions(self, new_transactions: list[dict]) -> int:
+        """Gemeinsame Merge-Logik fuer alle drei Import-Wege (CSV-Upload
+        mit bekanntem Mapping, CSV-Upload mit manuell bestaetigtem Mapping,
+        externe Quelle z.B. Bank-API): FUEGT zu state.transactions hinzu,
+        ERSETZT NICHT. Ein Ersetzen wuerde jede bereits geleistete
+        Zuordnungs-/Tag-Arbeit verwerfen, sobald irgendeine neue Quelle
+        eingelesen wird - genau das ist einmal real passiert (siehe Chat).
+
+        Duplikat-Schutz: eine "neue" Buchung gilt als bereits vorhanden,
+        wenn Datum+Betrag+Verwendungszweck exakt uebereinstimmen (z.B. bei
+        ueberlappenden Zeitraeumen zwischen zwei Importen) - nur echte
+        Neuzugaenge werden angehaengt. id/display_number werden fuer die
+        komplette, gemergte Liste neu vergeben (siehe
+        matcher.renumber_transactions), Status/Tags/Matches bestehender
+        Eintraege bleiben dabei unangetastet.
+
+        Gibt die Anzahl tatsaechlich neu hinzugefuegter (nicht
+        doppelter) Transaktionen zurueck."""
+        state = self.state
+        existing_keys = {(t["date"], t["amount_raw"], t["purpose"]) for t in state.transactions}
+        added = [t for t in new_transactions if (t["date"], t["amount_raw"], t["purpose"]) not in existing_keys]
+        if added:
+            state.transactions = state.transactions + added
+            renumber_transactions(state.transactions)
+            self.suggest_learned_tags()
+            state.persist_session()
+        return len(added)
+
     # --- CSV-Import & Mapping ------------------------------------------------
-    def on_csv_upload(self, filepath: str) -> bool:
-        """Liest eine neue CSV ein. Gibt True zurueck, wenn ein bereits
-        bekanntes Mapping automatisch angewendet werden konnte (dann sind
-        transactions sofort befuellt), sonst False (Mapping muss bestaetigt
-        werden, siehe on_mapping_confirm)."""
+    def on_csv_upload(self, filepath: str) -> dict:
+        """Liest eine neue CSV ein und FUEGT ihre Buchungen zu den
+        bestehenden hinzu (siehe _merge_new_transactions - eine weitere CSV
+        ersetzt nicht mehr bereits geleistete Zuordnungs-/Tag-Arbeit).
+
+        Gibt ein Dict zurueck:
+        - mapping_ready: True, wenn ein bereits bekanntes Mapping automatisch
+          angewendet werden konnte (dann sind transactions sofort ergaenzt),
+          sonst False (Mapping muss bestaetigt werden, siehe on_mapping_confirm)
+        - account_mismatch: bei bereits vorhandenen Buchungen und einer
+          erkennbaren Kontonummer/IBAN-Spalte, die vom bisherigen Konto
+          abweicht (siehe _find_account_identifier) - sonst None. Nur eine
+          Warnung, kein Blocker - die UI muss selbst entscheiden, ob trotzdem
+          fortgefahren wird.
+        - added/duplicates: nur gesetzt, wenn mapping_ready True ist (beim
+          manuellen Mapping-Weg liefert erst on_mapping_confirm() die Zahlen)."""
         state = self.state
         path = Path(filepath)
         raw_bytes = path.read_bytes()
 
         sig = f"{path.name}_{len(raw_bytes)}"
         if sig == state.csv_signature:
-            return state.mapping_confirmed
+            return {"mapping_ready": state.mapping_confirmed, "account_mismatch": None}
 
         df, encoding, delimiter, _ = read_csv_raw(_BytesUpload(raw_bytes))
+
+        account_mismatch = None
+        if state.transactions and state.csv_df is not None:
+            old_account = _find_account_identifier(state.csv_df, state.csv_df.columns)
+            new_account = _find_account_identifier(df, df.columns)
+            if old_account and new_account and old_account != new_account:
+                account_mismatch = (
+                    f"Die neue CSV scheint ein anderes Konto zu enthalten (bisher: {old_account}, "
+                    f"neu: {new_account}) - falsche Datei ausgewaehlt?"
+                )
+
         state.csv_df = df
         state.csv_columns = list(df.columns)
         state.csv_encoding = encoding
         state.csv_delimiter = delimiter
         state.csv_signature = sig
-        state.transactions = []
         state.matched_once = False
 
         col_sig = compute_csv_signature(df.columns)
@@ -79,18 +148,25 @@ class Controller:
         if saved_mapping:
             state.pending_mapping = saved_mapping
             state.mapping_confirmed = True
-            state.transactions = build_transactions(df, saved_mapping)
-            self.suggest_learned_tags()
-            state.persist_session()
-            return True
+            new_transactions = build_transactions(df, saved_mapping)
+            for t in new_transactions:
+                t["row_index"] = None  # csv_df wurde oben ersetzt, alte row_index-Werte waeren falsch
+            added = self._merge_new_transactions(new_transactions)
+            return {
+                "mapping_ready": True,
+                "account_mismatch": account_mismatch,
+                "added": added,
+                "duplicates": len(new_transactions) - added,
+            }
 
         state.pending_mapping = {"date_column": None, "amount_column": None, "purpose_column": None}
         state.mapping_confirmed = False
-        return False
+        return {"mapping_ready": False, "account_mismatch": account_mismatch}
 
     def on_mapping_confirm(
         self, date_column: str, amount_column: str, purpose_column: str, counterparty_column: str | None = None
-    ) -> None:
+    ) -> tuple[int, int]:
+        """Gibt (added, duplicates) zurueck (siehe _merge_new_transactions)."""
         state = self.state
         mapping = {
             "date_column": date_column,
@@ -103,53 +179,27 @@ class Controller:
         col_sig = compute_csv_signature(state.csv_columns)
         state.config["csv_mappings"][col_sig] = mapping
         state.save_config()
-        state.transactions = build_transactions(state.csv_df, mapping)
-        self.suggest_learned_tags()
         state.matched_once = False
-        state.persist_session()
+        new_transactions = build_transactions(state.csv_df, mapping)
+        for t in new_transactions:
+            t["row_index"] = None  # csv_df wurde beim Upload ersetzt, alte row_index-Werte waeren falsch
+        added = self._merge_new_transactions(new_transactions)
+        return added, len(new_transactions) - added
 
-    def on_external_import(self, df, mapping: dict) -> int:
+    def on_external_import(self, df, mapping: dict) -> tuple[int, int]:
         """Importiert Transaktionen aus einem bereits fertigen DataFrame mit
-        bekanntem Spalten-Mapping - FUEGT sie zu den bestehenden hinzu,
-        anders als on_mapping_confirm() (CSV-Upload), das state.transactions
-        komplett ersetzt. Fuer eine ERGAENZENDE Datenquelle (z.B. ein
-        Bank-API-Import zusaetzlich zu einer bereits geladenen/bearbeiteten
-        CSV) waere Ersetzen fatal: jede bereits geleistete Zuordnungs-/
-        Tag-Arbeit ginge verloren (genau das ist einmal passiert, siehe
-        Chat).
-
-        Duplikat-Schutz: eine "neue" Buchung gilt als bereits vorhanden,
-        wenn Datum+Betrag+Verwendungszweck exakt uebereinstimmen (z.B. bei
-        ueberlappenden Zeitraeumen von CSV- und Bank-Import) - nur echte
-        Neuzugaenge werden angehaengt. id/display_number werden fuer die
-        komplette, gemergte Liste neu vergeben (siehe
-        matcher.renumber_transactions), Status/Tags/Matches bestehender
-        Eintraege bleiben dabei unangetastet.
-
-        row_index bewusst auf None gesetzt (nicht die Position im
-        uebergebenen df): state.csv_df/pending_mapping/csv_columns
-        repraesentieren weiterhin nur die urspruenglich hochgeladene CSV
-        und werden hier NICHT veraendert - row_index=None wird von
+        bekanntem Spalten-Mapping (z.B. ein Bank-API-Import) - siehe
+        _merge_new_transactions. row_index bewusst auf None gesetzt: dieser
+        df ist nicht state.csv_df (das bleibt unveraendert die zuletzt
+        hochgeladene CSV) - row_index=None wird von
         reapply_counterparty_mapping() und beim gefilterten CSV-Export
         (exporter._build_kontoauszug_csv) korrekt als 'keine CSV-Quelle'
-        behandelt.
-
-        Gibt die Anzahl tatsaechlich neu hinzugefuegter (nicht
-        doppelter) Transaktionen zurueck."""
-        state = self.state
+        behandelt. Gibt (added, duplicates) zurueck."""
         new_transactions = build_transactions(df, mapping)
         for t in new_transactions:
             t["row_index"] = None
-
-        existing_keys = {(t["date"], t["amount_raw"], t["purpose"]) for t in state.transactions}
-        added = [t for t in new_transactions if (t["date"], t["amount_raw"], t["purpose"]) not in existing_keys]
-
-        if added:
-            state.transactions = state.transactions + added
-            renumber_transactions(state.transactions)
-            self.suggest_learned_tags()
-            state.persist_session()
-        return len(added)
+        added = self._merge_new_transactions(new_transactions)
+        return added, len(new_transactions) - added
 
     # --- Paperless-Abgleich ------------------------------------------------
     def on_match_click(self) -> int:

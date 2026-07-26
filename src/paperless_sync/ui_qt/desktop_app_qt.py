@@ -1234,15 +1234,32 @@ class DesktopAppQt(QMainWindow):
         if not path:
             return
         try:
-            mapping_ready = self.controller.on_csv_upload(path)
+            result = self.controller.on_csv_upload(path)
         except Exception as exc:
             QMessageBox.critical(self, tr("CSV-Import fehlgeschlagen"), str(exc))
             return
-        if not mapping_ready:
+        if result.get("account_mismatch"):
+            confirm = QMessageBox.question(
+                self,
+                tr("Anderes Konto?"),
+                result["account_mismatch"] + "\n\n" + tr("Trotzdem fortfahren und zusammenfuehren?"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
+        if not result.get("mapping_ready"):
             dlg = MappingDialog(self, self.app_state.csv_columns, self._on_mapping_confirmed)
             dlg.exec()
         else:
             self.render()
+            self._show_import_result(result.get("added", 0), result.get("duplicates", 0))
+
+    def _show_import_result(self, added: int, duplicates: int):
+        message = tr("{added} neue Buchung(en) hinzugefuegt.", added=added)
+        if duplicates:
+            message += "\n" + tr("{duplicates} bereits vorhandene Buchung(en) uebersprungen (Duplikat).", duplicates=duplicates)
+        QMessageBox.information(self, tr("Import abgeschlossen"), message)
 
     def _on_bank_import_click(self):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
@@ -1385,21 +1402,18 @@ class DesktopAppQt(QMainWindow):
             return
 
         df = transactions_to_dataframe(raw_txs)
-        added_count = self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
+        added, duplicates = self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
         self.render()
-        skipped = len(raw_txs) - added_count
-        message = tr("{added} neue Buchung(en) hinzugefuegt.", added=added_count)
-        if skipped:
-            message += "\n" + tr("{skipped} bereits vorhandene Buchung(en) uebersprungen (Duplikat).", skipped=skipped)
-        QMessageBox.information(self, tr("Import abgeschlossen"), message)
+        self._show_import_result(added, duplicates)
 
     def _on_mapping_confirmed(self, date_col, amount_col, purpose_col, counterparty_col=None):
         try:
-            self.controller.on_mapping_confirm(date_col, amount_col, purpose_col, counterparty_col)
+            added, duplicates = self.controller.on_mapping_confirm(date_col, amount_col, purpose_col, counterparty_col)
         except Exception as exc:
             QMessageBox.critical(self, tr("Mapping fehlgeschlagen"), str(exc))
             return
         self.render()
+        self._show_import_result(added, duplicates)
 
     def _on_match_click(self):
         if getattr(self, "_match_thread", None) is not None and self._match_thread.isRunning():
