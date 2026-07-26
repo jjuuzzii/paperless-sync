@@ -52,6 +52,7 @@ from paperless_sync.core.config_manager import get_resource_dir
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
+from paperless_sync.core.exporter import count_open_items
 from version import __version__
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im
@@ -1201,6 +1202,21 @@ class DesktopAppQt(QMainWindow):
         if not month:
             QMessageBox.warning(self, tr("Kein Monat"), tr("Bitte zuerst einen Monat waehlen."))
             return
+        open_count = count_open_items(self.app_state.transactions, month)
+        if open_count:
+            confirm = QMessageBox.question(
+                self,
+                tr("Offene Posten"),
+                tr(
+                    "{open_count} Buchung(en) in diesem Monat sind noch ungeklaert (offen, "
+                    "Mehrfach-Match oder Klaerungsbedarf). Der Export ist trotzdem moeglich - die "
+                    "offenen Posten landen in 04_Offene_Posten.csv. Trotzdem fortfahren?",
+                    open_count=open_count,
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
         try:
             export_path = self.controller.on_generate_export_click(month)
         except Exception as exc:
