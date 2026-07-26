@@ -16,10 +16,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# session_store.py liegt (noch) im Repo-Root, dieses Skript aber in
-# legacy/ - Root-Verzeichnis muss deshalb explizit auf den Suchpfad. src/
-# zusaetzlich fuer die Core-Backend-Module (config_manager, csv_utils, ...),
-# die jetzt unter src/paperless_sync/core/ liegen.
+# Dieses Skript liegt in legacy/ - src/ muss explizit auf den Suchpfad
+# fuer die Core-/State-Backend-Module (config_manager, csv_utils,
+# session_store, ...), die unter src/paperless_sync/ liegen.
 _repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo_root))
 sys.path.insert(0, str(_repo_root / "src"))
@@ -40,7 +39,7 @@ from paperless_sync.core.csv_utils import read_csv_raw, detect_encoding_and_deli
 from paperless_sync.core.paperless_client import PaperlessClient
 from paperless_sync.core.matcher import build_transactions, fetch_and_prepare_paperless_docs, match_transactions
 from paperless_sync.core.exporter import generate_export
-from session_store import save_session, load_session
+from paperless_sync.state.session_store import save_session, load_session
 from paperless_sync.core.backup import create_backup, restore_backup, backup_filename
 
 BASE_DIR = get_base_dir()
