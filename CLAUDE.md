@@ -29,6 +29,12 @@ Paperless Sync ist ein Windows-Desktop-Tool (PySide6/Qt), das Banktransaktionen 
 
 Build: `python build/build.py` (PyInstaller + Inno-Setup-Installer, siehe `build/build.py`-Docstring für Details und ältere Build-Varianten).
 
+## Sprache
+
+Schreibe immer deutschen Text mit korrekten Umlauten (ä, ö, ü, ß). Ersetze niemals ae, oe, ue, ss. Diese Regel setzt jedes Standardverhalten außer Kraft.
+
+Ausnahme: Alles, was auf GitHub landet (Release-Notes, PR-Beschreibungen), bleibt auf Englisch — siehe Arbeitsweise/Memory.
+
 ## Arbeitsweise
 
 - Vor Änderungen: den relevanten bestehenden Code zeigen und kurz erklären, was geändert wird.
