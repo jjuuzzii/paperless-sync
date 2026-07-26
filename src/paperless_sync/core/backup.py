@@ -2,8 +2,9 @@
 und den Arbeitsstand (session_state.json) als ZIP und stellt sie wieder her.
 
 Noetig, weil im installierten Betrieb alle Nutzerdaten ausserhalb des
-Programmordners in get_base_dir() (%APPDATA%\\PaperlessSync) liegen und bei
-einem Rechnerwechsel oder Datenverlust sonst verloren waeren - inklusive
+Programmordners in get_base_dir() liegen (plattformueblicher Ort fuer
+Pro-Nutzer-Anwendungsdaten, siehe config_manager.py) und bei einem
+Rechnerwechsel oder Datenverlust sonst verloren waeren - inklusive
 gelernter Tags/Zuordnungen (config.json) und ggf. noch nicht exportierter
 Zuordnungsarbeit (session_state.json)."""
 from __future__ import annotations

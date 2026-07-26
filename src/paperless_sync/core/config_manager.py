@@ -2,14 +2,15 @@
 
 Alle Pfade werden relativ zu get_base_dir() aufgeloest.
 
-Als installierte .exe (Inno-Setup-Installer) liegt das Programm selbst unter
-Program Files - ohne Adminrechte nicht beschreibbar, und generell nicht der
-vorgesehene Ort fuer Nutzerdaten unter Windows. Nutzerdaten (.env,
+Als installierte Anwendung liegt das Programm selbst in einem meist nicht
+ohne erhoehte Rechte beschreibbaren, generell nicht fuer Nutzerdaten
+vorgesehenen Ordner (z.B. Program Files unter Windows). Nutzerdaten (.env,
 config.json, session_state.json, input/, export/, Client-Zertifikat) leben
-deshalb in %APPDATA%\\PaperlessSync, dem ueblichen Windows-Ort fuer
-pro-Nutzer-Anwendungsdaten. Im Quellcode-Betrieb (Entwicklung) bleibt es
-weiterhin der Projektordner - einfacher zum Testen, keine Berechtigungs-
-Fallstricke.
+deshalb im plattformueblichen Ort fuer Pro-Nutzer-Anwendungsdaten (siehe
+get_base_dir(), platformdirs) - Windows: %APPDATA%\\PaperlessSync, macOS:
+~/Library/Application Support/PaperlessSync, Linux: ~/.config/PaperlessSync.
+Im Quellcode-Betrieb (Entwicklung) bleibt es weiterhin der Projektordner -
+einfacher zum Testen, keine Berechtigungs-Fallstricke.
 
 Bei PyInstaller (onedir, ab v6) landen gebuendelte Datendateien in einem
 '_internal'-Unterordner (sys._MEIPASS) neben der .exe. Das sind die
@@ -26,6 +27,7 @@ import sys
 from pathlib import Path
 
 from dotenv import dotenv_values
+from platformdirs import user_data_dir
 
 PLACEHOLDER_TOKEN = "your_paperless_api_token_here"
 
@@ -76,19 +78,21 @@ DEFAULT_CONFIG = {
 
 
 def get_base_dir() -> Path:
-    """Basisordner fuer Nutzerdaten. Als installierte .exe: %APPDATA%\\
-    PaperlessSync (Program Files ist i.d.R. nicht ohne Adminrechte
-    beschreibbar und nicht der vorgesehene Ort fuer Nutzerdaten). Im
-    Quellcode-Betrieb: Projektordner (Repo-Root, NICHT dieser core/-Ordner -
-    diese Datei liegt unter src/paperless_sync/core/, parents[3] geht
-    core/ -> paperless_sync/ -> src/ -> Repo-Root)."""
+    """Basisordner fuer Nutzerdaten. Als installierte Anwendung: der
+    plattformuebliche Ort fuer Pro-Nutzer-Anwendungsdaten (platformdirs) -
+    Windows: %APPDATA%\\PaperlessSync (roaming=True, wie zuvor hartcodiert;
+    appauthor=False vermeidet den sonst ueblichen zusaetzlichen
+    Herausgeber-Unterordner), macOS: ~/Library/Application
+    Support/PaperlessSync, Linux: ~/.config/PaperlessSync. Der
+    Installationsordner selbst (Program Files/Applications/...) ist i.d.R.
+    nicht ohne erhoehte Rechte beschreibbar und nicht der vorgesehene Ort
+    fuer Nutzerdaten. Im Quellcode-Betrieb: Projektordner (Repo-Root, NICHT
+    dieser core/-Ordner - diese Datei liegt unter src/paperless_sync/core/,
+    parents[3] geht core/ -> paperless_sync/ -> src/ -> Repo-Root)."""
     if getattr(sys, "frozen", False):
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            base = Path(appdata) / "PaperlessSync"
-            base.mkdir(parents=True, exist_ok=True)
-            return base
-        return Path(sys.executable).resolve().parent
+        base = Path(user_data_dir("PaperlessSync", appauthor=False, roaming=True))
+        base.mkdir(parents=True, exist_ok=True)
+        return base
     return Path(__file__).resolve().parents[3]
 
 
