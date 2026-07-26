@@ -2,7 +2,8 @@
 Bank-CSV-Kontoauszug fuer eine luecken lose Steuer-Beleg-Zuordnung.
 
 ARCHIVIERT: alte Streamlit-Oberflaeche, nicht mehr aktiv gepflegt - siehe
-legacy/README.md. Aktuelle Oberflaeche: desktop_app_qt.py im Repo-Root.
+legacy/README.md. Aktuelle Oberflaeche: run_app.py im Repo-Root
+(UI-Quellcode in src/paperless_sync/ui_qt/).
 
 Start (Quellcode):  streamlit run legacy/app.py
 """

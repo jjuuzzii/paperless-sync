@@ -1,8 +1,8 @@
 """Paperless Sync - Desktop-UI (CustomTkinter + natives Drag & Drop).
 
 ARCHIVIERT: durch die Qt-Oberflaeche abgeloest, nicht mehr aktiv gepflegt -
-siehe legacy/README.md. Aktuelle Oberflaeche: desktop_app_qt.py im
-Repo-Root.
+siehe legacy/README.md. Aktuelle Oberflaeche: run_app.py im Repo-Root
+(UI-Quellcode in src/paperless_sync/ui_qt/).
 
 Reine UI-Schicht: alle Geschaeftslogik lebt in desktop_controller.py /
 desktop_state.py und den bestehenden Backend-Modulen (matcher.py,

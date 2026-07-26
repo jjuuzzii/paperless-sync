@@ -46,7 +46,7 @@ Requires Python 3.12+.
 git clone <this-repo-url>
 cd paperless-sync
 pip install -r requirements.txt
-python desktop_app_qt.py
+python run_app.py
 ```
 
 On first launch you'll be guided through a short setup: your Paperless-ngx URL and API token, and how invoice amounts should be detected.
@@ -74,21 +74,21 @@ User data (config, credentials, session state) lives in `%APPDATA%\PaperlessSync
 
 ## Architecture
 
-The UI (PySide6/Qt, `desktop_app_qt.py` + `dialogs_qt.py`) is a thin layer over a framework-agnostic backend:
+Entry point: `run_app.py`. The UI (PySide6/Qt, `src/paperless_sync/ui_qt/`) is a thin layer over a framework-agnostic backend:
 
 | Module | Responsibility |
 |---|---|
-| `desktop_state.py` | Application state (replaces a web framework's session state) |
-| `desktop_controller.py` | User actions → state changes |
-| `matcher.py` | Building transactions from the CSV, matching against Paperless documents |
-| `paperless_client.py` | Thin Paperless-ngx REST API wrapper |
-| `exporter.py` | Generates the final per-month export folder |
-| `csv_utils.py` | Encoding/delimiter/amount/date parsing |
-| `config_manager.py` | `.env` / `config.json` loading and persistence |
-| `backup.py` | ZIP backup/restore of all user data |
-| `i18n.py` | Minimal DE/EN translation layer |
+| `src/paperless_sync/state/desktop_state.py` | Application state (replaces a web framework's session state) |
+| `src/paperless_sync/state/desktop_controller.py` | User actions → state changes |
+| `src/paperless_sync/core/matcher.py` | Building transactions from the CSV, matching against Paperless documents |
+| `src/paperless_sync/core/paperless_client.py` | Thin Paperless-ngx REST API wrapper |
+| `src/paperless_sync/core/exporter.py` | Generates the final per-month export folder |
+| `src/paperless_sync/core/csv_utils.py` | Encoding/delimiter/amount/date parsing |
+| `src/paperless_sync/core/config_manager.py` | `.env` / `config.json` loading and persistence |
+| `src/paperless_sync/core/backup.py` | ZIP backup/restore of all user data |
+| `src/paperless_sync/core/i18n.py` | Minimal DE/EN translation layer |
 
-An older CustomTkinter UI (`desktop_app.py`) and an even older Streamlit web UI (`app.py`) are kept in the repo as fallbacks but are no longer the primary target.
+An older CustomTkinter UI (`legacy/desktop_app.py`) and an even older Streamlit web UI (`legacy/app.py`) are archived in `legacy/` (see `legacy/README.md`) and no longer actively maintained.
 
 ## License
 

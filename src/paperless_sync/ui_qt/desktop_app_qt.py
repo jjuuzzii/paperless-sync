@@ -14,7 +14,7 @@ Nutzt DIESELBE framework-unabhaengige Backend-Schicht wie die CTk-Version
 exporter.py, csv_utils.py, config_manager.py, paperless_client.py,
 session_store.py) - keine Aenderung dort noetig.
 
-Start (Quellcode):  python desktop_app_qt.py
+Start (Quellcode):  python run_app.py (im Repo-Root)
 """
 from __future__ import annotations
 

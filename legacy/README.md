@@ -1,6 +1,6 @@
 # Legacy-Oberflächen
 
-Die Dateien in diesem Ordner sind **archiviert** — sie werden nicht mehr aktiv gepflegt und dienen nur noch als Referenz. Die aktuelle, unterstützte Oberfläche ist die Qt-App im Repo-Root (`desktop_app_qt.py`, ggf. nach weiterer Umstrukturierung unter `src/paperless_sync/ui_qt/`).
+Die Dateien in diesem Ordner sind **archiviert** — sie werden nicht mehr aktiv gepflegt und dienen nur noch als Referenz. Die aktuelle, unterstützte Oberfläche ist die Qt-App: Einstiegspunkt `run_app.py` im Repo-Root, UI-Quellcode unter `src/paperless_sync/ui_qt/`.
 
 ## Enthaltene Varianten
 
