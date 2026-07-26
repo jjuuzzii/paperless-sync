@@ -1347,10 +1347,10 @@ class DesktopAppQt(QMainWindow):
 
     def _on_bank_auth_finished(self, session, error):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe
-        _on_bank_import_click. Zeigt die abgerufenen Buchungen VOR der
-        Uebernahme (Anforderung aus dem Chat: erst pruefen, dann in die
-        Matching-Pipeline einspeisen, keine automatische Uebernahme ohne
-        Bestaetigung)."""
+        _on_bank_import_click. Konto waehlen, Buchungen abrufen und direkt
+        in die Matching-Pipeline uebernehmen (render() danach zeigt sie wie
+        gewohnt an - kein separater Vorschau-Bestaetigungsschritt mehr,
+        siehe Chat)."""
         if error:
             QMessageBox.critical(self, tr("Autorisierung fehlgeschlagen"), error)
             return
@@ -1385,20 +1385,6 @@ class DesktopAppQt(QMainWindow):
             return
 
         df = transactions_to_dataframe(raw_txs)
-        preview = df.head(20).to_string(index=False)
-        confirm = QMessageBox.question(
-            self,
-            tr("Buchungen importieren"),
-            tr(
-                "{count} Buchungen erhalten. Erste Zeilen:\n\n{preview}\n\nJetzt in die App uebernehmen?",
-                count=len(df),
-                preview=preview,
-            ),
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if confirm != QMessageBox.Yes:
-            return
-
         self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
         self.render()
 
