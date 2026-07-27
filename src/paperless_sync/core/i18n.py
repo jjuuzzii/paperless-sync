@@ -294,6 +294,7 @@ _EN: dict[str, str] = {
     "Aktueller Monat": "Current month",
     "Letzte 30 Tage": "Last 30 days",
     "Letzte 90 Tage": "Last 90 days",
+    "Alle verfügbaren Buchungen": "All available transactions",
     "Von:": "From:",
     "Bis:": "To:",
     "Manche Banken begrenzen den abrufbaren Zeitraum, unabhängig von deiner Auswahl hier.":

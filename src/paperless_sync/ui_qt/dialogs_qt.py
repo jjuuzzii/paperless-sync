@@ -1398,7 +1398,7 @@ class EnableBankingDateRangeDialog(QDialog):
     def __init__(self, parent, default_from: date, default_to: date):
         super().__init__(parent)
         self.setWindowTitle(tr("Zeitraum wählen"))
-        self.resize(380, 300)
+        self.resize(420, 320)
         self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
         _apply_window_icon(self)
         self._confirmed_range = None
@@ -1422,6 +1422,13 @@ class EnableBankingDateRangeDialog(QDialog):
             btn.clicked.connect(handler)
             quick_row.addWidget(btn)
         layout.addLayout(quick_row)
+
+        all_row = QHBoxLayout()
+        all_btn = QPushButton(tr("Alle verfügbaren Buchungen"))
+        all_btn.setStyleSheet(self._quick_button_style())
+        all_btn.clicked.connect(self._set_all_available)
+        all_row.addWidget(all_btn)
+        layout.addLayout(all_row)
 
         from_row = QHBoxLayout()
         from_row.addWidget(QLabel(tr("Von:")))
@@ -1474,6 +1481,17 @@ class EnableBankingDateRangeDialog(QDialog):
         today = date.today()
         self.date_from_entry.setText((today - timedelta(days=n)).strftime("%d.%m.%Y"))
         self.date_to_entry.setText(today.strftime("%d.%m.%Y"))
+
+    def _set_all_available(self):
+        """Setzt ein sehr weit zurueckliegendes Von-Datum (lange vor jedem
+        realistischen Kontoeroeffnungsdatum) statt date_from leer zu lassen -
+        die Bank liefert ohnehin nur so weit zurueck, wie sie tatsaechlich
+        Historie bereithaelt (siehe Hinweistext unten), ein frueheres Datum
+        anzufragen aendert daran nichts, holt aber zuverlaessig die maximal
+        verfuegbare Historie, ohne dass der Nutzer selbst ein plausibles
+        Startdatum raten muss."""
+        self.date_from_entry.setText("01.01.2000")
+        self.date_to_entry.setText(date.today().strftime("%d.%m.%Y"))
 
     def _confirm(self):
         date_from = parse_date(self.date_from_entry.text())

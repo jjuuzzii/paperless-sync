@@ -471,20 +471,25 @@ class DesktopAppQt(QMainWindow):
         layout.addWidget(upload_btn)
         layout.addSpacing(8)
 
-        # Nur sichtbar, wenn eine eigene Enable-Banking-Anwendung eingerichtet
+        # Nur SICHTBAR, wenn eine eigene Enable-Banking-Anwendung eingerichtet
         # ist (Application-ID + gueltige .pem-Datei, siehe
-        # EnableBankingSetupWizard) - ohne das bleibt die App unveraendert
-        # nur mit CSV-Import nutzbar.
-        self.bank_import_btn = None
-        if self._enable_banking_ready():
-            self.bank_import_btn = QPushButton(tr("Von Bank importieren"))
-            self.bank_import_btn.setToolTip(
-                tr("Öffnet den Bank-Login im Browser – bei jedem Import erneut nötig.")
-            )
-            self.bank_import_btn.setStyleSheet(self._flat_button_style())
-            self.bank_import_btn.clicked.connect(self._on_bank_import_click)
-            layout.addWidget(self.bank_import_btn)
-            layout.addSpacing(8)
+        # EnableBankingSetupWizard) - das Widget selbst wird aber immer
+        # angelegt (nicht nur bedingt), sonst gaebe es nach einer
+        # Einrichtung ueber den Wizard (der aus einem bereits offenen
+        # Settings-Dialog heraus gestartet wird, waehrend die Sidebar schon
+        # laengst gebaut ist) gar kein Widget, das sichtbar gemacht werden
+        # koennte - _build_sidebar() laeuft nur EINMAL in __init__. Sichtbarkeit
+        # wird stattdessen bei jedem Settings-Schliessen neu geprueft, siehe
+        # _open_settings()/_refresh_bank_import_visibility().
+        self.bank_import_btn = QPushButton(tr("Von Bank importieren"))
+        self.bank_import_btn.setToolTip(
+            tr("Öffnet den Bank-Login im Browser – bei jedem Import erneut nötig.")
+        )
+        self.bank_import_btn.setStyleSheet(self._flat_button_style())
+        self.bank_import_btn.clicked.connect(self._on_bank_import_click)
+        self.bank_import_btn.setVisible(self._enable_banking_ready())
+        layout.addWidget(self.bank_import_btn)
+        layout.addSpacing(8)
 
         self.match_btn = QPushButton(f"🔍  {tr('Mit Paperless abgleichen')}")
         self._match_btn_default_text = self.match_btn.text()
@@ -1483,6 +1488,16 @@ class DesktopAppQt(QMainWindow):
     def _open_settings(self):
         dlg = SettingsDialog(self, self.app_state, self._on_settings_saved)
         dlg.exec()
+        # Der Enable-Banking-Assistent (ueber "Einrichtungsassistent starten"
+        # in den Settings gestartet) speichert Application-ID/Schluessel-Pfad
+        # sofort selbst, unabhaengig davon, ob die Settings ueber "Speichern"
+        # geschlossen werden - Sichtbarkeit des Bank-Import-Buttons deshalb
+        # IMMER neu pruefen, wenn die Settings zugehen, nicht nur in
+        # _on_settings_saved() (das laeuft nur bei explizitem "Speichern").
+        self._refresh_bank_import_visibility()
+
+    def _refresh_bank_import_visibility(self):
+        self.bank_import_btn.setVisible(self._enable_banking_ready())
 
     def _on_settings_saved(self):
         # state.save_env() (in SettingsDialog._save) hat den Client bereits
