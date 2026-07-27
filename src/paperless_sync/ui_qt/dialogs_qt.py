@@ -54,6 +54,15 @@ from paperless_sync.core.enable_banking_client import (
 from .theme_qt import COLORS, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language, get_language
 
+# Fuer die Startmonat-Auswahl des Geschaeftsjahrs (SettingsDialog) - eigene
+# Liste statt exporter._MONTH_NAMES_DE, die dort bewusst ASCII-transliteriert
+# ist (Dateiname-sicher, z.B. "Maerz" fuer Ordnernamen). Hier ist es
+# UI-Text, also mit echten Umlauten (siehe CLAUDE.md).
+_MONTH_NAMES_UI = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+]
+
 
 def _apply_window_icon(window):
     # Immer das mitgelieferte Standard-Icon - das hochgeladene Firmenlogo
@@ -281,6 +290,30 @@ class SettingsDialog(QDialog):
         export_pick_btn.clicked.connect(self._pick_export_dir)
         export_row.addWidget(export_pick_btn)
         export_card.layout().addLayout(export_row)
+
+        fiscal_card = self._section(
+            tr("Geschäftsjahr"),
+            tr(
+                "Bestimmt, welche 12 Monate der Jahresexport zusammenfasst - z.B. Juli bis Juni bei einem "
+                "abweichenden Wirtschaftsjahr mit Startmonat Juli."
+            ),
+        )
+        fiscal_config = state.config.get("fiscal_year", {})
+        self.fiscal_calendar_checkbox = QCheckBox(tr("Kalenderjahr verwenden (Januar-Dezember)"))
+        self.fiscal_calendar_checkbox.setStyleSheet("border: none;")
+        self.fiscal_calendar_checkbox.setChecked(bool(fiscal_config.get("calendar_year", True)))
+        self.fiscal_calendar_checkbox.toggled.connect(self._refresh_fiscal_fields)
+        fiscal_card.layout().addWidget(self.fiscal_calendar_checkbox)
+
+        self.fiscal_start_month_label = QLabel(tr("Startmonat des Wirtschaftsjahrs"))
+        self.fiscal_start_month_label.setStyleSheet("border: none;")
+        fiscal_card.layout().addWidget(self.fiscal_start_month_label)
+        self.fiscal_start_month_combo = NoScrollComboBox()
+        self.fiscal_start_month_combo.setStyleSheet(_combo_style())
+        self.fiscal_start_month_combo.addItems([tr(name) for name in _MONTH_NAMES_UI])
+        self.fiscal_start_month_combo.setCurrentIndex(int(fiscal_config.get("start_month", 7)) - 1)
+        fiscal_card.layout().addWidget(self.fiscal_start_month_combo)
+        self._refresh_fiscal_fields()
 
         detect_card = self._section(tr("Beleg-Erkennung"))
         detection = state.config.get("amount_detection", {})
@@ -650,6 +683,11 @@ class SettingsDialog(QDialog):
         if is_custom_field:
             self._load_custom_fields()
 
+    def _refresh_fiscal_fields(self):
+        is_calendar_year = self.fiscal_calendar_checkbox.isChecked()
+        self.fiscal_start_month_label.setVisible(not is_calendar_year)
+        self.fiscal_start_month_combo.setVisible(not is_calendar_year)
+
     def _build_temp_client(self):
         url = self.url_entry.text().strip()
         token = self.token_entry.text().strip()
@@ -921,6 +959,10 @@ class SettingsDialog(QDialog):
         state.config["purpose_noise_terms"] = list(self._noise_terms)
         state.config["custom_tags"] = dict(self._custom_tags)
         state.config["export_dir"] = self._selected_export_dir
+        state.config["fiscal_year"] = {
+            "calendar_year": self.fiscal_calendar_checkbox.isChecked(),
+            "start_month": self.fiscal_start_month_combo.currentIndex() + 1,
+        }
         state.config["paperless_success_tag_enabled"] = self.paperless_tag_checkbox.isChecked()
         state.config["paperless_success_tag_name"] = self.paperless_tag_name_entry.text().strip() or "Abgeglichen"
 

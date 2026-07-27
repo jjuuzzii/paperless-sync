@@ -131,6 +131,15 @@ DEFAULT_CONFIG = {
         # den Einstellungen, None = noch nie erfolgreich gewesen.
         "last_import_at": None,
     },
+    # Bestimmt, welche 12 Kalendermonate ein "Geschaeftsjahr" fuer den
+    # Jahresexport (siehe exporter.export_fiscal_year) bilden.
+    # calendar_year=True (Standard) -> Januar-Dezember, start_month
+    # irrelevant. calendar_year=False -> abweichendes Wirtschaftsjahr, das
+    # mit start_month beginnt (z.B. start_month=7 -> Juli bis Juni).
+    "fiscal_year": {
+        "calendar_year": True,
+        "start_month": 7,
+    },
 }
 
 
@@ -357,6 +366,7 @@ def _deep_merge_defaults(data: dict) -> dict:
     if data.get("company_icon_path"):
         merged["company_icon_path"] = str(data["company_icon_path"])
     merged["enable_banking"].update(data.get("enable_banking", {}) or {})
+    merged["fiscal_year"].update(data.get("fiscal_year", {}) or {})
 
     _clean_custom_tags(merged)
     return merged
