@@ -90,6 +90,37 @@ def count_open_items(transactions: list[dict], month_str: str) -> int:
     )
 
 
+def current_fiscal_year_start(fiscal_config: dict, today: date_cls | None = None) -> int:
+    """Kalenderjahr, in dem das AKTUELL LAUFENDE Geschaeftsjahr begonnen hat
+    (siehe get_fiscal_year_months) - Vorbelegung fuer den Jahresexport-
+    Dialog. Bei Kalenderjahr einfach das laufende Jahr. Bei einem
+    abweichenden Wirtschaftsjahr: liegt der aktuelle Monat VOR dem
+    Startmonat, hat das laufende Geschaeftsjahr bereits im Vorjahr begonnen
+    (z.B. Start Juli, heute Maerz 2026 -> laufendes Geschaeftsjahr ist
+    2025/2026, Rueckgabe 2025)."""
+    today = today or date_cls.today()
+    if fiscal_config.get("calendar_year", True):
+        return today.year
+    start_month = int(fiscal_config.get("start_month", 7))
+    return today.year if today.month >= start_month else today.year - 1
+
+
+def fiscal_year_open_items_summary(transactions: list[dict], month_strs: list[str]) -> tuple[int, list[str]]:
+    """Gesamtzahl offener Posten ueber alle Monate eines Geschaeftsjahres
+    (siehe get_fiscal_year_months) plus die Liste der betroffenen Monate
+    als deutsche Anzeige-Namen (z.B. 'Januar 2026') - fuer die Vorab-
+    Warnung vor dem Jahresexport, analog zu count_open_items() auf
+    Monatsebene."""
+    total = 0
+    months_with_open_items = []
+    for month_str in month_strs:
+        count = count_open_items(transactions, month_str)
+        if count:
+            total += count
+            months_with_open_items.append(f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}")
+    return total, months_with_open_items
+
+
 def _sanitize_filename(name: str, fallback: str = "beleg", max_length: int | None = None) -> str:
     name = _ILLEGAL_FILENAME_CHARS.sub("_", (name or "").strip())
     name = name.strip(" .")

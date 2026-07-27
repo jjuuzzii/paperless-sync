@@ -20,7 +20,7 @@ from paperless_sync.core.matcher import (
     find_split_payment_candidates,
     normalize_purpose,
 )
-from paperless_sync.core.exporter import generate_export
+from paperless_sync.core.exporter import generate_export, export_fiscal_year
 from paperless_sync.core.config_manager import csv_signature as compute_csv_signature
 from paperless_sync.core.tx_status import TxStatus
 
@@ -476,6 +476,27 @@ class Controller:
             raise RuntimeError("Keine Transaktionen zum Exportieren vorhanden.")
         return generate_export(
             state.get_export_base_dir(), month, state.transactions, state.csv_df, state.csv_delimiter, state.client
+        )
+
+    def on_export_fiscal_year_click(self, start_year: int) -> Path:
+        state = self.state
+        if not state.transactions:
+            raise RuntimeError("Keine Transaktionen zum Exportieren vorhanden.")
+        logo_path = None
+        if state.config.get("company_icon_path"):
+            candidate = state.base_dir / state.config["company_icon_path"]
+            if candidate.exists():
+                logo_path = candidate
+        return export_fiscal_year(
+            state.get_export_base_dir(),
+            start_year,
+            state.config.get("fiscal_year", {}),
+            state.transactions,
+            state.csv_df,
+            state.csv_delimiter,
+            state.client,
+            company_name=state.env.get("COMPANY_NAME") or "",
+            logo_path=logo_path,
         )
 
     # --- Hilfsfunktionen ------------------------------------------------

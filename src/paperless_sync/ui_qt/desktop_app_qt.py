@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import sys
 from datetime import date, datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap, QShortcut, QKeySequence
@@ -59,6 +60,7 @@ from .dialogs_qt import (
     SearchableListDialog,
     EnableBankingSetupWizard,
     EnableBankingDateRangeDialog,
+    FiscalYearExportDialog,
     _EnableBankingAuthWorker,
     _last_day_of_month,
 )
@@ -66,7 +68,14 @@ from paperless_sync.core.config_manager import get_resource_dir, get_effective_e
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
-from paperless_sync.core.exporter import count_open_items
+from paperless_sync.core.exporter import (
+    count_open_items,
+    current_fiscal_year_start,
+    fiscal_year_label,
+    fiscal_year_open_items_summary,
+    get_fiscal_year_months,
+    zip_export_folder,
+)
 from paperless_sync.core.csv_utils import parse_date
 from paperless_sync.core.enable_banking_client import (
     EnableBankingClient,
@@ -530,6 +539,11 @@ class DesktopAppQt(QMainWindow):
         )
         export_btn.clicked.connect(self._on_generate_export_click)
         layout.addWidget(export_btn)
+
+        layout.addSpacing(6)
+        fiscal_year_export_btn = _outline_button(tr("JAHRESEXPORT"), COLORS["text_muted"])
+        fiscal_year_export_btn.clicked.connect(self._on_export_fiscal_year_click)
+        layout.addWidget(fiscal_year_export_btn)
 
         layout.addSpacing(8)
         version_lbl = QLabel(f"v{__version__}")
@@ -1727,6 +1741,65 @@ class DesktopAppQt(QMainWindow):
         QMessageBox.information(
             self, tr("Export fertig"), tr("Ordner erstellt:\n{export_path}", export_path=export_path)
         )
+
+    def _on_export_fiscal_year_click(self):
+        if not self.app_state.transactions:
+            QMessageBox.warning(self, tr("Keine Buchungen"), tr("Bitte zuerst eine CSV laden."))
+            return
+
+        fiscal_config = self.app_state.config.get("fiscal_year", {})
+        default_start_year = current_fiscal_year_start(fiscal_config)
+        dlg = FiscalYearExportDialog(self, fiscal_config, default_start_year)
+        if dlg.exec() != QDialog.Accepted or dlg.selected_start_year() is None:
+            return
+        start_year = dlg.selected_start_year()
+
+        month_strs = get_fiscal_year_months(start_year, fiscal_config)
+        total_open, months_with_open = fiscal_year_open_items_summary(self.app_state.transactions, month_strs)
+        if total_open:
+            confirm = QMessageBox.question(
+                self,
+                tr("Offene Posten"),
+                tr(
+                    "Es gibt noch {total_open} offene Posten über das Geschäftsjahr {year_label} verteilt, "
+                    "in den Monaten: {months}. Der Export ist trotzdem möglich - die offenen Posten landen "
+                    "zusätzlich in 00_Offene_Posten_Jahr.csv. Trotzdem fortfahren?",
+                    total_open=total_open,
+                    year_label=fiscal_year_label(start_year, fiscal_config),
+                    months=", ".join(months_with_open),
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
+
+        try:
+            export_path = self.controller.on_export_fiscal_year_click(start_year)
+        except Exception as exc:
+            QMessageBox.critical(self, tr("Export fehlgeschlagen"), str(exc))
+            return
+
+        zip_confirm = QMessageBox.question(
+            self,
+            tr("Jahresexport fertig"),
+            tr("Jahresordner erstellt:\n{export_path}\n\nZusätzlich als ZIP speichern?", export_path=export_path),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if zip_confirm != QMessageBox.Yes:
+            return
+        zip_path, _ = QFileDialog.getSaveFileName(
+            self, tr("Jahresexport-ZIP speichern"), f"{export_path.name}.zip", "ZIP-Archiv (*.zip)"
+        )
+        if not zip_path:
+            return
+        if not zip_path.lower().endswith(".zip"):
+            zip_path += ".zip"
+        try:
+            Path(zip_path).write_bytes(zip_export_folder(export_path))
+        except Exception as exc:
+            QMessageBox.critical(self, tr("ZIP fehlgeschlagen"), str(exc))
+            return
+        QMessageBox.information(self, tr("ZIP gespeichert"), tr("ZIP gespeichert: {zip_path}", zip_path=zip_path))
 
     def _refresh_connection_status(self):
         if not self.app_state.client:

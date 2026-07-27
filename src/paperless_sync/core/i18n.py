@@ -346,4 +346,24 @@ _EN: dict[str, str] = {
     "Neue Application-ID:": "New Application ID:",
     "Schlüssel-Pfad ändern": "Change key path",
     "Schlüssel-Datei wählen": "Choose key file",
+
+    # --- Jahresexport ------------------------------------------------------
+    "JAHRESEXPORT": "YEARLY EXPORT",
+    "Jahresexport": "Yearly export",
+    "Start-Jahr des Geschäftsjahres": "Fiscal year start year",
+    "Geschäftsjahr {label}": "Fiscal year {label}",
+    "Keine Buchungen": "No transactions",
+    "Es gibt noch {total_open} offene Posten über das Geschäftsjahr {year_label} verteilt, "
+    "in den Monaten: {months}. Der Export ist trotzdem möglich - die offenen Posten landen "
+    "zusätzlich in 00_Offene_Posten_Jahr.csv. Trotzdem fortfahren?":
+        "There are still {total_open} open items across fiscal year {year_label}, in these months: "
+        "{months}. The export is possible anyway - the open items are additionally listed in "
+        "00_Offene_Posten_Jahr.csv. Continue anyway?",
+    "Jahresexport fertig": "Yearly export complete",
+    "Jahresordner erstellt:\n{export_path}\n\nZusätzlich als ZIP speichern?":
+        "Folder created:\n{export_path}\n\nAlso save as a ZIP?",
+    "Jahresexport-ZIP speichern": "Save yearly export ZIP",
+    "ZIP fehlgeschlagen": "ZIP failed",
+    "ZIP gespeichert": "ZIP saved",
+    "ZIP gespeichert: {zip_path}": "ZIP saved: {zip_path}",
 }

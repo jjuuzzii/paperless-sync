@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QAbstractItemView,
     QStackedWidget,
+    QSpinBox,
 )
 
 from paperless_sync.core.backup import create_backup, restore_backup, backup_filename, WrongBackupPasswordError
@@ -44,6 +45,7 @@ from paperless_sync.core.config_manager import (
 )
 from paperless_sync.core.paperless_client import PaperlessClient
 from paperless_sync.core.csv_utils import parse_date
+from paperless_sync.core.exporter import fiscal_year_label
 from paperless_sync.core.enable_banking_client import (
     DEFAULT_REDIRECT_URL,
     EnableBankingClient,
@@ -1549,6 +1551,79 @@ class EnableBankingDateRangeDialog(QDialog):
 
     def selected_range(self):
         return self._confirmed_range
+
+
+class FiscalYearExportDialog(QDialog):
+    """Start-Jahr-Auswahl vor dem Jahresexport (siehe
+    exporter.export_fiscal_year) - vorbelegt mit dem aktuell laufenden
+    Geschaeftsjahr (exporter.current_fiscal_year_start), frei aenderbar.
+    Zeigt live den resultierenden Geschaeftsjahr-Anzeigetext
+    (fiscal_year_label), damit bei einem abweichenden Wirtschaftsjahr klar
+    ist, welche 12 Monate gemeint sind, bevor der Export laeuft."""
+
+    def __init__(self, parent, fiscal_config: dict, default_start_year: int):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Jahresexport"))
+        self.resize(360, 220)
+        self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
+        _apply_window_icon(self)
+        self.fiscal_config = fiscal_config
+        self._confirmed_start_year = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel(tr("Start-Jahr des Geschäftsjahres"))
+        title.setFont(qfont(12, bold=True))
+        layout.addWidget(title)
+
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2000, 2100)
+        self.year_spin.setValue(default_start_year)
+        self.year_spin.setStyleSheet(_entry_style())
+        self.year_spin.valueChanged.connect(self._update_preview)
+        layout.addWidget(self.year_spin)
+
+        self.preview_label = QLabel("")
+        self.preview_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt;")
+        layout.addWidget(self.preview_label)
+        self._update_preview()
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton(tr("Abbrechen"))
+        cancel_btn.setStyleSheet(self._secondary_button_style())
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        confirm_btn = QPushButton(tr("Weiter"))
+        confirm_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
+            f"padding: 8px 16px; font-weight: bold; }} QPushButton:hover {{ background-color: #4a76d6; }}"
+        )
+        confirm_btn.clicked.connect(self._confirm)
+        btn_row.addWidget(confirm_btn)
+        layout.addLayout(btn_row)
+
+    def _secondary_button_style(self) -> str:
+        return (
+            f"QPushButton {{ background: transparent; color: {COLORS['text_muted']}; border: 1px solid "
+            f"{COLORS['text_muted']}; border-radius: 10px; padding: 8px 16px; }}"
+            f"QPushButton:hover {{ background-color: {COLORS['bg_card_hover']}; }}"
+        )
+
+    def _update_preview(self):
+        label = fiscal_year_label(self.year_spin.value(), self.fiscal_config)
+        self.preview_label.setText(tr("Geschäftsjahr {label}", label=label))
+
+    def _confirm(self):
+        self._confirmed_start_year = self.year_spin.value()
+        self.accept()
+
+    def selected_start_year(self) -> int | None:
+        return self._confirmed_start_year
 
 
 class MappingDialog(QDialog):
