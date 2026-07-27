@@ -389,7 +389,15 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict], amo
             ]
             tx["note"] = "Achtung: Betrag tritt mehrfach auf - Bitte manuell zuordnen"
         else:
-            tolerant = find_tolerant_candidates(tx, candidates_pool, used_doc_ids, tolerance_abs, tolerance_pct, top_n)
+            # Vorerst deaktiviert (config["amount_matching"]["enabled"],
+            # siehe Chat) - die vorgeschlagenen Kandidaten waren fachlich
+            # zu oft unpassend. tolerant bleibt dann leer, Verhalten
+            # entspricht dem reinen Exakt-Abgleich von vor Punkt 2.
+            tolerant = (
+                find_tolerant_candidates(tx, candidates_pool, used_doc_ids, tolerance_abs, tolerance_pct, top_n)
+                if amount_matching.get("enabled", False)
+                else []
+            )
             if tolerant:
                 tx["status"] = TxStatus.MULTI_MATCH
                 tx["matched_docs"] = []

@@ -56,6 +56,13 @@ DEFAULT_CONFIG = {
     # eine feste absolute Toleranz waere bei kleinen Betraegen unsinnig
     # grosszuegig, eine feste prozentuale bei grossen Betraegen unsinnig eng.
     "amount_matching": {
+        # Vorerst deaktiviert (siehe Chat): die vorgeschlagenen Toleranz-
+        # Kandidaten waren in der Praxis zu oft fachlich unpassend (z.B.
+        # eine Stromkostenabrechnung als Kandidat fuer eine Hofladen-
+        # Buchung, nur weil der Betrag zufaellig nah genug lag) - Matching
+        # bleibt bis zur Ueberarbeitung rein exakt. exakter Mehrfachtreffer
+        # (EXACT_AMOUNT_MULTI) ist davon NICHT betroffen, bleibt aktiv.
+        "enabled": False,
         "tolerance_abs": 5.0,  # Euro
         "tolerance_pct": 0.03,  # Anteil, nicht Prozentpunkt (0.03 = 3 %)
         "top_n_candidates": 3,  # max. vorgeschlagene Kandidaten (Toleranz UND Teilzahlung Fall B)
@@ -64,7 +71,12 @@ DEFAULT_CONFIG = {
         "enabled": True,
     },
     "split_payment": {
-        "enabled": True,
+        # Vorerst deaktiviert (siehe Chat): es fehlt noch eine eigene
+        # Kandidaten-Auswahl-UI fuer Teilzahlungs-Vorschlaege (Karte zeigt
+        # aktuell nur den Hinweistext, aber keine anklickbaren Kandidaten
+        # wie beim Toleranz-/Mehrfachtreffer) - erst wieder aktivieren,
+        # wenn das nachgezogen ist.
+        "enabled": False,
         "day_window": 14,  # +/- Tage um Beleg- bzw. Buchungsdatum
         "max_documents": 2,  # Fall B: max. Anzahl kombinierter Dokumente
         "max_pool_size": 8,  # Fall B: Sicherheitsgrenze gegen Kombinatorik-Explosion
