@@ -112,6 +112,25 @@ DEFAULT_CONFIG = {
     # relativ zu get_base_dir() (z.B. "company_icon.png"), ersetzt dort das
     # Standard-Icon in der Sidebar und als Fenstersymbol. None = kein Logo.
     "company_icon_path": None,
+    # Bank-Import ueber Enable Banking (siehe enable_banking_client.py) -
+    # JEDER Nutzer bringt seine eigene Registrierung/eigenes Konto mit,
+    # nichts davon ist hier vorbelegt oder hartcodiert. key_path: None =
+    # Standardpfad verwenden (get_enable_banking_key_path(), plattform-
+    # abhaengig ueber platformdirs) - gleiches None-Default-Muster wie bei
+    # export_dir oben. redirect_url ist bewusst mit dem empfohlenen
+    # redirectmeto.com-Wert vorbelegt (HTTPS->lokaler HTTP-Listener, siehe
+    # Enable-Banking-Vorgabe: Redirect-URLs muessen in Production HTTPS
+    # sein, auch fuer localhost) - frei aenderbar, falls jemand einen
+    # eigenen HTTPS-Redirect betreibt.
+    "enable_banking": {
+        "application_id": None,
+        "redirect_url": "https://redirectmeto.com/http://localhost:8765/callback",
+        "key_path": None,
+        # ISO-Zeitstempel des letzten erfolgreichen Imports/Verbindungstests
+        # (siehe EnableBankingSetupWizard/dialogs_qt.py) - reine Anzeige in
+        # den Einstellungen, None = noch nie erfolgreich gewesen.
+        "last_import_at": None,
+    },
 }
 
 
@@ -135,9 +154,10 @@ def get_base_dir() -> Path:
 
 
 def get_enable_banking_key_path() -> Path:
-    """Erwarteter Pfad fuer den persoenlichen Enable-Banking-Application-
-    Private-Key - eine rein lokale, nicht oeffentliche Erweiterung (siehe
-    enable_banking_client.py, per .gitignore vom Repo ausgeschlossen).
+    """Standard-Ablageort fuer den persoenlichen Enable-Banking-Application-
+    Private-Key JEDES Nutzers (siehe enable_banking_client.py - oeffentliches
+    Modul, aber der Schluessel selbst ist hoechstpersoenlich und darf nie ins
+    Repo gelangen).
 
     Nutzt bewusst IMMER den echten plattformueblichen Nutzerdaten-Ort
     (platformdirs) und NICHT get_base_dir() selbst: get_base_dir() zeigt im
@@ -145,11 +165,24 @@ def get_enable_banking_key_path() -> Path:
     waere das der falsche Ort, selbst mit .gitignore (z.B. bei einem
     versehentlichen 'git add -A'). Legt den Unterordner enable_banking/ an,
     falls er noch nicht existiert - fasst eine dort bereits vorhandene
-    .pem-Datei NIE an (weder lesend noch schreibend)."""
+    .pem-Datei NIE an (weder lesend noch schreibend).
+
+    Das ist der DEFAULT - siehe get_effective_enable_banking_key_path() fuer
+    die Aufloesung inkl. eines moeglichen Overrides ueber
+    config["enable_banking"]["key_path"]."""
     base = Path(user_data_dir("PaperlessSync", appauthor=False, roaming=True))
     folder = base / "enable_banking"
     folder.mkdir(parents=True, exist_ok=True)
     return folder / "application.pem"
+
+
+def get_effective_enable_banking_key_path(config: dict) -> Path:
+    """config["enable_banking"]["key_path"] ist normalerweise None (=
+    Standardpfad verwenden, siehe get_enable_banking_key_path) - nur
+    gesetzt, wenn jemand den Schluessel bewusst woanders ablegen will
+    (gleiches None-Default-Muster wie export_dir)."""
+    override = (config.get("enable_banking") or {}).get("key_path")
+    return Path(override) if override else get_enable_banking_key_path()
 
 
 def get_resource_dir() -> Path:
@@ -323,6 +356,7 @@ def _deep_merge_defaults(data: dict) -> dict:
         merged["language"] = data["language"]
     if data.get("company_icon_path"):
         merged["company_icon_path"] = str(data["company_icon_path"])
+    merged["enable_banking"].update(data.get("enable_banking", {}) or {})
 
     _clean_custom_tags(merged)
     return merged
