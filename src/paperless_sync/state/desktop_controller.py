@@ -6,6 +6,7 @@ und persistiert bei Bedarf die Sitzung. Die UI ruft danach einfach ihre
 render()-Methode erneut auf - der Controller kennt kein Tkinter-Widget."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -102,6 +103,20 @@ class Controller:
             state.persist_session()
         return len(added)
 
+    def _archive_import_file(self, filename: str, raw_bytes: bytes) -> None:
+        """Legt eine Kopie jeder importierten Quelldatei in state.input_dir/
+        ab - manueller CSV-Upload UND Bank-API-Import (dort als CSV
+        serialisiert, siehe on_external_import), damit jederzeit
+        nachvollziehbar bleibt, welche Rohdaten wann importiert wurden.
+        Zeitstempel-Praefix verhindert, dass ein zweiter Import mit
+        gleichem Dateinamen (z.B. eine Bank exportiert immer 'umsatz.csv')
+        die vorherige Kopie stillschweigend ueberschreibt."""
+        state = self.state
+        state.input_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        safe_name = re.sub(r'[<>:"/\\|?*]', "_", filename).strip() or "import.csv"
+        (state.input_dir / f"{timestamp}_{safe_name}").write_bytes(raw_bytes)
+
     # --- CSV-Import & Mapping ------------------------------------------------
     def on_csv_upload(self, filepath: str) -> dict:
         """Liest eine neue CSV ein und FUEGT ihre Buchungen zu den
@@ -132,6 +147,7 @@ class Controller:
         if sig == state.csv_signature:
             return {"mapping_ready": state.mapping_confirmed, "account_mismatch": None}
 
+        self._archive_import_file(path.name, raw_bytes)
         df, encoding, delimiter, _ = read_csv_raw(_BytesUpload(raw_bytes))
 
         account_mismatch = None
@@ -203,6 +219,10 @@ class Controller:
         reapply_counterparty_mapping() und beim gefilterten CSV-Export
         (exporter._build_kontoauszug_csv) korrekt als 'keine CSV-Quelle'
         behandelt. Gibt (added, duplicates) zurueck."""
+        # Als CSV serialisiert archiviert (siehe _archive_import_file) - es
+        # gibt bei einem API-Import keine rohe Quelldatei, aber derselbe
+        # Nachvollziehbarkeits-Gedanke gilt genauso.
+        self._archive_import_file("enable_banking_import.csv", df.to_csv(index=False).encode("utf-8-sig"))
         new_transactions = build_transactions(df, mapping)
         for t in new_transactions:
             t["row_index"] = None

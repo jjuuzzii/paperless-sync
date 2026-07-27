@@ -1,6 +1,10 @@
 # Secrets
 .env
 paperless_client_cert.p12
+# Sicherheitsnetz: ein Enable-Banking-Schluessel darf nie hier landen (lebt
+# immer ausserhalb des Repos, siehe config_manager.get_enable_banking_key_path),
+# aber falls doch mal jemand von Hand eine .pem-Datei in den Projektordner legt.
+*.pem
 
 # Laufzeitdaten
 /input/*
