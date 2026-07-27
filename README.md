@@ -18,10 +18,14 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 ## Features
 
 - **Automatic CSV parsing** — encoding/delimiter/date/amount format detection, works with most European bank export formats.
-- **Optional direct bank import** — fetch transactions straight from your bank via your own [Enable Banking](https://enablebanking.com/) application, guided by an in-app setup wizard — see [below](#optional-setting-up-bank-import-enable-banking).
+- **Optional direct bank import** — fetch transactions straight from your bank via your own [Enable Banking](https://enablebanking.com/) application, guided by an in-app setup wizard — see [below](#optional-setting-up-bank-import-enable-banking). Every import (CSV or bank) is archived with a timestamp so you always have the original source data.
 - **Two receipt-detection methods** — filename regex or a Paperless custom field holding the invoice amount.
+- **Duplicate-booking detection** — two bookings with the same date, amount, and purpose are flagged for review instead of silently matching the same receipt to both.
+- **Tolerant amount matching & split-payment detection** — optional (off by default until their candidate-selection UI is refined further): suggest receipts within a configurable amount tolerance, or a receipt/booking that's really the sum of several others.
 - **Learned tag suggestions** — recurring bookings (same purpose text, ignoring dates/reference numbers) get a one-click tag suggestion.
 - **Multi-document matching** — link several Paperless documents to a single transaction (e.g. a marketplace payout covering multiple invoices).
+- **Live search & filter** — filter the transaction list by text, amount (or range), and date range, combinable with the status tabs; a hint always shows how many bookings are currently visible.
+- **Keyboard navigation** — arrow keys to move between transactions, Ctrl+Down to jump to the next unresolved one.
 - **mTLS client certificate support** — for Paperless instances behind something like Cloudflare Access with a PKCS#12 client certificate.
 - **Backup & restore** — one ZIP with settings, learned tags, credentials, and current work state; restorable on a new machine.
 - **Custom company logo** — replace the default paperclip icon at the top of the sidebar with your own (PNG).
@@ -128,6 +132,17 @@ Entry point: `run_app.py`. The UI (PySide6/Qt, `src/paperless_sync/ui_qt/`) is a
 | `src/paperless_sync/core/i18n.py` | Minimal DE/EN translation layer |
 
 An older CustomTkinter UI (`legacy/desktop_app.py`) and an even older Streamlit web UI (`legacy/app.py`) are archived in `legacy/` (see `legacy/README.md`) and no longer actively maintained.
+
+## Testing
+
+The backend (CSV parsing, matching, export, backup/restore) is covered by an automated `pytest` suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+See [`tests/README.md`](tests/README.md) for what's covered and what's intentionally left out (Qt UI rendering and real network clients aren't part of this suite).
 
 ## License
 
