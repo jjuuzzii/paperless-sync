@@ -83,12 +83,25 @@ def parse_date(value):
     """Parst Datumswerte in beliebigem gaengigen Format (bevorzugt Tag-zuerst,
     wie in deutschen Bankauszuegen ueblich). Einzelwert-Best-Effort ohne
     Spaltenkontext - siehe detect_date_column_format() fuer die
-    zuverlaessige, spaltenweite Variante mit Mehrdeutigkeits-Erkennung."""
+    zuverlaessige, spaltenweite Variante mit Mehrdeutigkeits-Erkennung.
+
+    Ein vierstelliger erster Block ('2026-01-10') ist strukturell eindeutig
+    ISO YYYY-MM-DD, unabhaengig vom restlichen Tag/Monat-Rest - wird das
+    dateutil ueberlassen, vertauscht dessen dayfirst=True Tag und Monat
+    faelschlich, sobald beide <=12 sind (z.B. '2026-01-10' wuerde als
+    10. Monat, Tag 1 gelesen). Deshalb hier vorab ein struktureller Check,
+    bevor an dateutil's Mehrdeutigkeits-Raten uebergeben wird."""
     if value is None:
         return None
     s = str(value).strip()
     if not s:
         return None
+    m = _DATE_PATTERN.match(s)
+    if m and len(m.group(1)) == 4:
+        try:
+            return date(int(m.group(1)), int(m.group(3)), int(m.group(4)))
+        except ValueError:
+            return None
     try:
         return dateparser.parse(s, dayfirst=True).date()
     except (ValueError, TypeError, OverflowError):
