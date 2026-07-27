@@ -516,12 +516,13 @@ def test_build_offene_posten_jahr_csv_only_open_items_with_month_summary(tmp_pat
     rows = _rows(csv_bytes)
 
     assert rows[0] == ["Zusammenfassung offene Posten pro Monat"]
-    month_summary_lines = [r[0] for r in rows[1:13]]  # genau 12 Monatszeilen, siehe month_strs
-    assert "Februar 2026: 1 unresolved" in month_summary_lines
-    assert "März 2026: 1 multi_match, 1 duplicate_suspect" in month_summary_lines
-    assert "Januar 2026: 0 offene Posten" in month_summary_lines
-
+    # NUR Monate MIT offenen Posten werden aufgelistet, kein "0 offene
+    # Posten" fuer jeden erledigten/leeren Monat (siehe Chat) - Kopfblock
+    # ist daher genau 2 Zeilen lang (Februar + Maerz).
     detail_header_idx = next(i for i, r in enumerate(rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    month_summary_lines = [r[0] for r in rows[1:detail_header_idx] if r]
+    assert month_summary_lines == ["Februar 2026: 1 unresolved", "März 2026: 1 multi_match, 1 duplicate_suspect"]
+
     detail_rows = rows[detail_header_idx + 1:]
     assert len(detail_rows) == 3  # nur die drei offenen, MATCHED fehlt
     assert all(row[0] in ("2026-02", "2026-03") for row in detail_rows)
@@ -536,8 +537,8 @@ def test_build_offene_posten_jahr_csv_empty_when_everything_resolved(tmp_path):
     csv_bytes = _build_offene_posten_jahr_csv(year_root, month_strs, ";")
     rows = _rows(csv_bytes)
 
-    month_summary_lines = [r[0] for r in rows[1:13]]
-    assert all("0 offene Posten" in line for line in month_summary_lines)
+    assert rows[0] == ["Zusammenfassung offene Posten pro Monat"]
+    assert rows[1] == ["Keine offenen Posten im gesamten Geschäftsjahr."]
     detail_header_idx = next(i for i, r in enumerate(rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
     assert rows[detail_header_idx + 1:] == []
 
@@ -627,15 +628,14 @@ def test_fiscal_year_open_items_appear_correctly_across_months_calendar_year(tmp
     )
 
     offene_rows = _rows((year_root / "00_Offene_Posten_Jahr.csv").read_bytes())
-    month_summary_lines = [r[0] for r in offene_rows[1:13]]
-    assert "Februar 2026: 1 unresolved" in month_summary_lines
-    assert "März 2026: 1 multi_match, 1 duplicate_suspect" in month_summary_lines
-    assert "Juni 2026: 1 split_payment" in month_summary_lines
-    assert "Januar 2026: 0 offene Posten" in month_summary_lines  # MATCHED zaehlt nicht als offen
-    assert "Mai 2026: 0 offene Posten" in month_summary_lines  # TAGGED zaehlt nicht als offen
-    assert "April 2026: 0 offene Posten" in month_summary_lines  # keine Buchungen ueberhaupt
-
     detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    # NUR Monate MIT offenen Posten im Kopfblock - Januar (MATCHED), Mai
+    # (TAGGED) und April (keine Buchungen) tauchen dort bewusst NICHT auf.
+    month_summary_lines = [r[0] for r in offene_rows[1:detail_header_idx] if r]
+    assert month_summary_lines == [
+        "Februar 2026: 1 unresolved", "März 2026: 1 multi_match, 1 duplicate_suspect", "Juni 2026: 1 split_payment",
+    ]
+
     detail_rows = offene_rows[detail_header_idx + 1:]
     assert len(detail_rows) == 4  # exakt die vier offenen, MATCHED/TAGGED fehlen komplett
     grounds = {row[4] for row in detail_rows}

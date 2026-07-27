@@ -476,11 +476,13 @@ def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_de
     """00_Offene_Posten_Jahr.csv - NUR die Buchungen des gesamten
     Geschaeftsjahres mit Klaerungsbedarf (siehe tx_status.OPEN_STATUSES),
     mit einem Kopfblock (Anzahl offener Posten je Monat/Status-Typ ganz
-    oben, Format 'Monat JJJJ: N status_a, N status_b' bzw. '... : 0 offene
-    Posten'), damit auf einen Blick erkennbar ist, wo noch Klaerungsbedarf
-    besteht, ohne die Detailzeilen lesen zu muessen. MUSS NACH
-    00_Jahresuebersicht.csv aufgerufen werden (siehe export_fiscal_year) -
-    liest diese zurueck statt Status ein zweites Mal zu berechnen."""
+    oben, Format 'Monat JJJJ: N status_a, N status_b') - NUR fuer Monate,
+    die tatsaechlich offene Posten haben (kein Rauschen aus einer Zeile pro
+    Monat mit '0 offene Posten' fuer jeden erledigten Monat, siehe Chat),
+    damit auf einen Blick erkennbar ist, wo noch Klaerungsbedarf besteht,
+    ohne die Detailzeilen lesen zu muessen. MUSS NACH 00_Jahresuebersicht.csv
+    aufgerufen werden (siehe export_fiscal_year) - liest diese zurueck
+    statt Status ein zweites Mal zu berechnen."""
     rows = _read_jahresuebersicht_rows(year_root, csv_delimiter)
     open_rows_by_month: dict[str, list[list[str]]] = {m: [] for m in month_strs}
     for row in rows:
@@ -492,12 +494,12 @@ def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_de
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
 
     writer.writerow(["Zusammenfassung offene Posten pro Monat"])
-    for month_str in month_strs:
-        month_rows = open_rows_by_month.get(month_str, [])
+    months_with_open_items = [m for m in month_strs if open_rows_by_month.get(m)]
+    if not months_with_open_items:
+        writer.writerow(["Keine offenen Posten im gesamten Geschäftsjahr."])
+    for month_str in months_with_open_items:
+        month_rows = open_rows_by_month[month_str]
         month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
-        if not month_rows:
-            writer.writerow([f"{month_label}: 0 offene Posten"])
-            continue
         counts: dict[str, int] = {}
         for row in month_rows:
             status = _LABEL_TO_STATUS.get(row[6])
@@ -595,12 +597,13 @@ def _build_jahresuebersicht_pdf(
         for month_str in month_strs
     }
 
+    # NUR Monate mit tatsaechlich offenen Posten auflisten (kein Rauschen
+    # aus einer Zeile pro erledigtem Monat mit "0 offene Posten", siehe Chat).
     for month_str in month_strs:
-        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
         open_rows = open_rows_by_month[month_str]
         if not open_rows:
-            story.append(Paragraph(f"{month_label}: 0 offene Posten", styles["Normal"]))
             continue
+        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
         counts: dict[str, int] = {}
         for row in open_rows:
             status = _LABEL_TO_STATUS.get(row[6])
