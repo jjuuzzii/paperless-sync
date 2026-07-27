@@ -22,7 +22,7 @@ import re
 import sys
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
-from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
+from PySide6.QtGui import QIcon, QFontMetrics, QPixmap, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -419,6 +419,11 @@ class DesktopAppQt(QMainWindow):
         self._build_sidebar(root_layout)
         self._build_main_area(root_layout)
 
+        self._selected_card_id: str | None = None
+        self._success_card_ids: list[str] = []
+        self._action_card_ids: list[str] = []
+        self._build_keyboard_shortcuts()
+
         months = self.app_state.months
         self.app_state.selected_month = months[-1] if months else None
 
@@ -681,6 +686,9 @@ class DesktopAppQt(QMainWindow):
 
         self.filter_hint_label = QLabel("")
         self.filter_hint_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt;")
+        self.filter_hint_label.setToolTip(
+            tr("Tastatur: ↑/↓ zum Navigieren, Strg+↓ springt zum nächsten offenen Posten")
+        )
         main_layout.addWidget(self.filter_hint_label)
         main_layout.addSpacing(8)
 
@@ -862,6 +870,88 @@ class DesktopAppQt(QMainWindow):
         self._action_shown_count = len(priority_txs) + len(missing_txs)
         self._action_total_count = len(priority_txs_all) + len(missing_txs_all)
         self._update_filter_hint()
+
+        # Kartenreihenfolge je Tab fuer die Pfeiltasten-Navigation (siehe
+        # _navigate_cards) - _card_widgets selbst mischt beide Tabs.
+        self._success_card_ids = [tx["id"] for tx in visible_success]
+        self._action_card_ids = [tx["id"] for tx in priority_txs] + [tx["id"] for tx in visible_missing]
+        # _render_tabs() baut bei jeder Filteraenderung ALLE Karten-Widgets
+        # neu (siehe _clear_layout oben) - eine bestehende Auswahl muss
+        # deshalb auf dem NEUEN Widget erneut hervorgehoben werden, sonst
+        # ginge die Markierung bei jedem Tastendruck im Suchfeld verloren.
+        if self._selected_card_id not in self._card_widgets:
+            self._selected_card_id = None
+        elif self._selected_card_id:
+            self._set_card_highlight(self._selected_card_id, True)
+
+    def _build_keyboard_shortcuts(self):
+        """Pfeiltasten zum Navigieren in der jeweils aktiven Tab-Liste
+        (Erfolgreich/Unklar+Fehlt) + Kuerzel fuer 'springe zum naechsten
+        offenen Posten' (siehe CLAUDE.md/UI-Prompt Punkt 8). QShortcut statt
+        keyPressEvent-Override, damit die Tasten unabhaengig davon greifen,
+        welches Kind-Widget gerade den Fokus hat."""
+        down = QShortcut(QKeySequence(Qt.Key_Down), self)
+        down.activated.connect(lambda: self._navigate_cards(1))
+        up = QShortcut(QKeySequence(Qt.Key_Up), self)
+        up.activated.connect(lambda: self._navigate_cards(-1))
+        next_open = QShortcut(QKeySequence("Ctrl+Down"), self)
+        next_open.activated.connect(self._jump_to_next_open)
+
+    def _navigate_cards(self, direction: int):
+        # Pfeiltasten sollen normale Textbearbeitung in den Filterfeldern
+        # nicht stoeren - dort werden sie ignoriert statt Karten zu
+        # durchlaufen.
+        if isinstance(QApplication.focusWidget(), QLineEdit):
+            return
+        ids = self._success_card_ids if self.tabs.currentIndex() == 0 else self._action_card_ids
+        if not ids:
+            return
+        if self._selected_card_id in ids:
+            new_index = max(0, min(len(ids) - 1, ids.index(self._selected_card_id) + direction))
+        else:
+            new_index = 0 if direction > 0 else len(ids) - 1
+        self._select_card(ids[new_index])
+
+    def _jump_to_next_open(self):
+        """'Springe zum naechsten offenen Posten' - wechselt bei Bedarf
+        selbst in den Tab 'Unklar / Fehlt' (dort leben UNRESOLVED/
+        MULTI_MATCH/DUPLICATE_SUSPECT/SPLIT_PAYMENT, siehe
+        AppState.missing_transactions/unclear_transactions/
+        review_transactions) und waehlt den naechsten Eintrag nach der
+        aktuellen Auswahl (zyklisch)."""
+        if self.tabs.currentIndex() != 1:
+            self.tabs.setCurrentIndex(1)
+        ids = self._action_card_ids
+        if not ids:
+            return
+        if self._selected_card_id in ids:
+            new_index = (ids.index(self._selected_card_id) + 1) % len(ids)
+        else:
+            new_index = 0
+        self._select_card(ids[new_index])
+
+    def _select_card(self, tx_id: str):
+        if self._selected_card_id and self._selected_card_id != tx_id:
+            self._set_card_highlight(self._selected_card_id, False)
+        self._selected_card_id = tx_id
+        self._set_card_highlight(tx_id, True)
+        widget = self._card_widgets.get(tx_id)
+        if widget is not None:
+            scroll = self.success_scroll if self.tabs.currentIndex() == 0 else self.action_scroll
+            scroll.ensureWidgetVisible(widget)
+
+    def _set_card_highlight(self, tx_id: str, highlighted: bool):
+        widget = self._card_widgets.get(tx_id)
+        if widget is None:
+            return
+        base_style = widget.property("_base_style")
+        if base_style is None:
+            base_style = widget.styleSheet()
+            widget.setProperty("_base_style", base_style)
+        if highlighted:
+            widget.setStyleSheet(base_style + f"QFrame {{ border: 3px solid {COLORS['blue']}; }}")
+        else:
+            widget.setStyleSheet(base_style)
 
     def _placeholder_label(self, text: str) -> QLabel:
         lbl = QLabel(text)

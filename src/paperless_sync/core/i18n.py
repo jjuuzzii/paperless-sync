@@ -66,6 +66,7 @@ _EN: dict[str, str] = {
     "Bis (TT.MM.JJJJ)": "To (DD.MM.YYYY)",
     "Keine Treffer für die aktuellen Filter.": "No matches for the current filters.",
     "{shown} von {total} Buchungen sichtbar (Filter: {label})": "{shown} of {total} transactions visible (filter: {label})",
+    "Tastatur: ↑/↓ zum Navigieren, Strg+↓ springt zum nächsten offenen Posten": "Keyboard: ↑/↓ to navigate, Ctrl+↓ jumps to the next open item",
 
     # --- Karten (Erfolg/Aktion) -------------------------------------------
     "Noch keine zugeordneten Belege.": "No matched receipts yet.",
