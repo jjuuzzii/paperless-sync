@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+import zipfile
 from pathlib import Path
 
 from .tx_status import TxStatus, OPEN_STATUSES, label_de
@@ -268,3 +269,86 @@ def generate_export(
     )
 
     return export_root
+
+
+def get_fiscal_year_months(start_year: int, fiscal_config: dict) -> list[str]:
+    """Die 12 Monats-Strings ('YYYY-MM') eines Geschaeftsjahres, bereits in
+    Geschaeftsjahr-Reihenfolge (siehe config_manager.DEFAULT_CONFIG
+    ['fiscal_year']). Bei Kalenderjahr (calendar_year=True, der Normalfall)
+    ist das Januar..Dezember von start_year. Bei einem abweichenden
+    Wirtschaftsjahr beginnt es im konfigurierten start_month von start_year
+    und laeuft 12 Monate bis start_month-1 des Folgejahres (z.B.
+    start_month=7, start_year=2025 -> Juli 2025 bis Juni 2026 - das
+    Geschaeftsjahr '2025/2026' aus der Anforderung)."""
+    calendar_year = fiscal_config.get("calendar_year", True)
+    start_month = 1 if calendar_year else int(fiscal_config.get("start_month", 7))
+    months = []
+    for i in range(12):
+        month_index = start_month - 1 + i
+        year = start_year + month_index // 12
+        month = month_index % 12 + 1
+        months.append(f"{year:04d}-{month:02d}")
+    return months
+
+
+def fiscal_year_folder_name(start_year: int, fiscal_config: dict) -> str:
+    """'Jahresexport_2026' bei Kalenderjahr, 'Jahresexport_2025-2026' bei
+    einem abweichenden Wirtschaftsjahr - start_year ist dabei immer das
+    Kalenderjahr, in dem das Geschaeftsjahr BEGINNT (siehe
+    get_fiscal_year_months)."""
+    if fiscal_config.get("calendar_year", True):
+        return f"Jahresexport_{start_year}"
+    return f"Jahresexport_{start_year}-{start_year + 1}"
+
+
+def export_fiscal_year(
+    export_base_dir: Path,
+    start_year: int,
+    fiscal_config: dict,
+    transactions: list[dict],
+    csv_df,
+    csv_delimiter: str,
+    client,
+) -> Path:
+    """Baut den kompletten Jahresexport: ruft generate_export() fuer jeden
+    der 12 Monate des Geschaeftsjahres frisch aus transactions auf (siehe
+    get_fiscal_year_months) - unabhaengig davon, ob fuer einen dieser
+    Monate schon einmal separat exportiert wurde, keine Wiederverwendung
+    alter Ordnerinhalte. Sammelt die entstandenen Monatsordner unter einem
+    gemeinsamen, nach dem Geschaeftsjahr benannten Wurzelordner (siehe
+    fiscal_year_folder_name).
+
+    Die Monatsordner (month_folder_name: 'YYYY-MM_Monatsname') sortieren
+    durch ihr bestehendes YYYY-MM-Praefix bereits von selbst chronologisch
+    in Geschaeftsjahr-Reihenfolge, auch ueber einen Jahreswechsel hinweg
+    (z.B. '2025-07_Juli' < '2025-12_Dezember' < '2026-01_Januar' <
+    '2026-06_Juni') - keine zusaetzliche Umbenennung/Nummerierung noetig.
+
+    Prueft NICHT selbst auf offene Posten - das ist Aufgabe der aufrufenden
+    UI-Schicht (siehe generate_export-Docstring fuer denselben Grundsatz
+    auf Monatsebene, sowie die geplante jahresweite Vorab-Warnung)."""
+    year_root = Path(export_base_dir) / fiscal_year_folder_name(start_year, fiscal_config)
+    year_root.mkdir(parents=True, exist_ok=True)
+
+    for month_str in get_fiscal_year_months(start_year, fiscal_config):
+        generate_export(year_root, month_str, transactions, csv_df, csv_delimiter, client)
+
+    return year_root
+
+
+def zip_export_folder(folder: Path) -> bytes:
+    """Packt einen kompletten Export-Ordner (Monats- oder Jahresexport) als
+    ZIP-Bytes - mit Pfaden relativ zum UEBERGEORDNETEN Ordner, damit der
+    Ordnername selbst (z.B. 'Jahresexport_2026/') als oberste Ebene im ZIP
+    erhalten bleibt und alle relativen Pfade in den *.csv-Dateien (z.B.
+    '2026-01_Januar/01_Belege_zugeordnet/...') nach dem Entpacken an
+    anderer Stelle weiterhin aufloesbar sind. Reine Bytes statt direktem
+    Schreiben, analog zu backup.create_backup() - die aufrufende UI-Schicht
+    entscheidet ueber den Zielpfad (siehe SettingsDialog._create_backup)."""
+    folder = Path(folder)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in folder.rglob("*"):
+            if file_path.is_file():
+                zf.write(file_path, arcname=file_path.relative_to(folder.parent))
+    return buf.getvalue()

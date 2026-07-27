@@ -28,8 +28,12 @@ from paperless_sync.core.exporter import (
     _recipient_name,
     _sanitize_filename,
     count_open_items,
+    export_fiscal_year,
+    fiscal_year_folder_name,
     generate_export,
+    get_fiscal_year_months,
     month_folder_name,
+    zip_export_folder,
 )
 from paperless_sync.core.match_candidate import MatchCandidate, MatchReasonType
 from paperless_sync.core.tx_status import TxStatus
@@ -286,3 +290,124 @@ def test_generate_export_only_includes_transactions_from_requested_month(tmp_pat
     export_root = generate_export(tmp_path, "2026-01", [jan_tx, feb_tx], csv_df, ";", client)
     rows = _rows((export_root / "00_Uebersicht.csv").read_bytes())
     assert len(rows) - 1 == 1
+
+
+# --- Jahresexport: get_fiscal_year_months / fiscal_year_folder_name --------
+
+def test_get_fiscal_year_months_calendar_year():
+    months = get_fiscal_year_months(2026, {"calendar_year": True, "start_month": 7})
+    assert months == [f"2026-{m:02d}" for m in range(1, 13)]
+
+
+def test_get_fiscal_year_months_deviating_fiscal_year_crosses_calendar_year():
+    months = get_fiscal_year_months(2025, {"calendar_year": False, "start_month": 7})
+    assert months == [
+        "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12",
+        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
+    ]
+
+
+def test_get_fiscal_year_months_folder_names_already_sort_chronologically():
+    # Kein Umbenennen/Nummerieren noetig - siehe export_fiscal_year-Docstring:
+    # das YYYY-MM-Praefix von month_folder_name() sortiert von selbst richtig,
+    # auch ueber den Jahreswechsel hinweg.
+    months = get_fiscal_year_months(2025, {"calendar_year": False, "start_month": 7})
+    folder_names = [month_folder_name(m) for m in months]
+    assert folder_names == sorted(folder_names)
+    assert folder_names[0] == "2025-07_Juli"
+    assert folder_names[-1] == "2026-06_Juni"
+
+
+def test_fiscal_year_folder_name_calendar_year():
+    assert fiscal_year_folder_name(2026, {"calendar_year": True}) == "Jahresexport_2026"
+
+
+def test_fiscal_year_folder_name_deviating_fiscal_year():
+    assert fiscal_year_folder_name(2025, {"calendar_year": False, "start_month": 7}) == "Jahresexport_2025-2026"
+
+
+# --- export_fiscal_year / zip_export_folder ---------------------------------
+
+def test_export_fiscal_year_calendar_year_creates_all_12_month_folders(tmp_path):
+    transactions = [
+        make_transaction(id_=f"{i:03d}", date_=date(2026, m, 10), amount=-10.0 * m, status=TxStatus.MATCHED, row_index=None)
+        for i, m in enumerate((1, 6, 12), start=1)
+    ]
+    csv_df = pd.DataFrame({"Datum": [], "Betrag": []})
+    client = FakePaperlessClient()
+
+    year_root = export_fiscal_year(
+        tmp_path, 2026, {"calendar_year": True, "start_month": 7}, transactions, csv_df, ";", client
+    )
+
+    assert year_root == tmp_path / "Jahresexport_2026"
+    month_dirs = sorted(p.name for p in year_root.iterdir() if p.is_dir())
+    assert len(month_dirs) == 12
+    assert month_dirs[0] == "2026-01_Januar"
+    assert month_dirs[-1] == "2026-12_Dezember"
+    # Transaktionen landen im richtigen Monatsordner
+    jan_rows = _rows((year_root / "2026-01_Januar" / "00_Uebersicht.csv").read_bytes())
+    assert len(jan_rows) - 1 == 1
+    feb_rows = _rows((year_root / "2026-02_Februar" / "00_Uebersicht.csv").read_bytes())
+    assert len(feb_rows) - 1 == 0
+
+
+def test_export_fiscal_year_deviating_fiscal_year_spans_calendar_years(tmp_path):
+    transactions = [
+        make_transaction(id_="001", date_=date(2025, 7, 5), amount=-10.0, status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="002", date_=date(2026, 6, 20), amount=-20.0, status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="003", date_=date(2025, 12, 31), amount=-30.0, status=TxStatus.UNRESOLVED, row_index=None),
+    ]
+    csv_df = pd.DataFrame({"Datum": [], "Betrag": []})
+    client = FakePaperlessClient()
+
+    year_root = export_fiscal_year(
+        tmp_path, 2025, {"calendar_year": False, "start_month": 7}, transactions, csv_df, ";", client
+    )
+
+    assert year_root == tmp_path / "Jahresexport_2025-2026"
+    assert (year_root / "2025-07_Juli").is_dir()
+    assert (year_root / "2025-12_Dezember").is_dir()
+    assert (year_root / "2026-06_Juni").is_dir()
+    assert not (year_root / "2025-01_Januar").exists()  # ausserhalb des Geschaeftsjahres
+
+
+def test_export_fiscal_year_regenerates_months_from_scratch(tmp_path):
+    # Anforderung 2: immer frisch aus den aktuellen Transaktionsdaten, egal
+    # ob fuer diesen Monat schon einmal separat exportiert wurde.
+    stale_tx = make_transaction(id_="001", date_=date(2026, 3, 5), status=TxStatus.MATCHED, row_index=None)
+    generate_export(tmp_path, "2026-03", [stale_tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+    old_uebersicht = (tmp_path / "2026-03_Maerz" / "00_Uebersicht.csv").read_bytes()
+    assert len(_rows(old_uebersicht)) - 1 == 1
+
+    fresh_transactions = [
+        make_transaction(id_="001", date_=date(2026, 3, 5), status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="002", date_=date(2026, 3, 15), status=TxStatus.UNRESOLVED, row_index=None),
+    ]
+    year_root = export_fiscal_year(
+        tmp_path, 2026, {"calendar_year": True}, fresh_transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient()
+    )
+    new_uebersicht = _rows((year_root / "2026-03_Maerz" / "00_Uebersicht.csv").read_bytes())
+    assert len(new_uebersicht) - 1 == 2  # neu erzeugt, nicht der alte Stand mit nur 1 Buchung
+
+
+def test_zip_export_folder_preserves_relative_paths_after_extraction(tmp_path):
+    tx = make_transaction(id_="001", date_=date(2026, 1, 5), amount=-50.0, status=TxStatus.MATCHED,
+                           matched_docs=[{"id": 1, "original_file_name": "r.pdf"}], row_index=None)
+    client = FakePaperlessClient({1: b"%PDF-1.4 fake"})
+    export_fiscal_year(
+        tmp_path, 2026, {"calendar_year": True}, [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", client
+    )
+    year_root = tmp_path / "Jahresexport_2026"
+
+    zip_bytes = zip_export_folder(year_root)
+
+    unzip_dir = tmp_path / "unzipped_elsewhere"
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        zf.extractall(unzip_dir)
+
+    reopened_root = unzip_dir / "Jahresexport_2026"
+    uebersicht_rows = _rows((reopened_root / "2026-01_Januar" / "00_Uebersicht.csv").read_bytes())
+    rel_path = uebersicht_rows[1][3]
+    assert rel_path
+    assert (reopened_root / "2026-01_Januar" / rel_path).exists()
