@@ -34,6 +34,7 @@ from paperless_sync.core.exporter import (
     export_fiscal_year,
     fiscal_year_folder_name,
     fiscal_year_label,
+    fiscal_year_open_items_summary,
     generate_export,
     get_fiscal_year_months,
     month_folder_name,
@@ -591,3 +592,97 @@ def test_export_fiscal_year_writes_all_three_summary_files(tmp_path):
     detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
     detail_rows = offene_rows[detail_header_idx + 1:]
     assert len(detail_rows) == 1  # nur die UNRESOLVED-Buchung, nicht die MATCHED
+
+
+# --- Schritt 6: offene Posten in mehreren Monaten/Status-Typen, beide Geschaeftsjahr-Varianten --
+
+def _mixed_status_transactions(base_year: int) -> list[dict]:
+    """Offene Posten in DREI verschiedenen Monaten mit VIER verschiedenen
+    Status-Typen, dazwischen erledigte Buchungen und ein Monat ganz ohne
+    Buchungen - fuer die Schritt-6-Vorgabe 'mindestens drei verschiedene
+    Monate und unterschiedliche Status-Typen'."""
+    return [
+        make_transaction(id_="001", date_=date(base_year, 1, 5), status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="002", date_=date(base_year, 2, 10), status=TxStatus.UNRESOLVED, row_index=None),
+        make_transaction(id_="003", date_=date(base_year, 3, 12), status=TxStatus.MULTI_MATCH, row_index=None),
+        make_transaction(id_="004", date_=date(base_year, 3, 20), status=TxStatus.DUPLICATE_SUSPECT, row_index=None),
+        make_transaction(id_="005", date_=date(base_year, 5, 1), status=TxStatus.TAGGED, tag="PRIVAT", row_index=None),
+        make_transaction(id_="006", date_=date(base_year, 6, 18), status=TxStatus.SPLIT_PAYMENT, row_index=None),
+    ]
+
+
+def test_fiscal_year_open_items_appear_correctly_across_months_calendar_year(tmp_path):
+    transactions = _mixed_status_transactions(2026)
+    fiscal_config = {"calendar_year": True}
+    month_strs = get_fiscal_year_months(2026, fiscal_config)
+
+    # Vorab-Warnung (siehe desktop_app_qt._on_export_fiscal_year_click) wuerde feuern -
+    # ein Eintrag PRO MONAT mit offenen Posten, nicht pro offener Buchung (Maerz hat 2).
+    total_open, months_with_open = fiscal_year_open_items_summary(transactions, month_strs)
+    assert total_open == 4
+    assert months_with_open == ["Februar 2026", "März 2026", "Juni 2026"]
+
+    year_root = export_fiscal_year(
+        tmp_path, 2026, fiscal_config, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient(),
+    )
+
+    offene_rows = _rows((year_root / "00_Offene_Posten_Jahr.csv").read_bytes())
+    month_summary_lines = [r[0] for r in offene_rows[1:13]]
+    assert "Februar 2026: 1 unresolved" in month_summary_lines
+    assert "März 2026: 1 multi_match, 1 duplicate_suspect" in month_summary_lines
+    assert "Juni 2026: 1 split_payment" in month_summary_lines
+    assert "Januar 2026: 0 offene Posten" in month_summary_lines  # MATCHED zaehlt nicht als offen
+    assert "Mai 2026: 0 offene Posten" in month_summary_lines  # TAGGED zaehlt nicht als offen
+    assert "April 2026: 0 offene Posten" in month_summary_lines  # keine Buchungen ueberhaupt
+
+    detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    detail_rows = offene_rows[detail_header_idx + 1:]
+    assert len(detail_rows) == 4  # exakt die vier offenen, MATCHED/TAGGED fehlen komplett
+    grounds = {row[4] for row in detail_rows}
+    assert grounds == {"Offen", "Mehrere Kandidaten - Auswahl nötig", "Möglicher Duplikat-Fall", "Mögliche Teilzahlung"}
+
+    pdf_bytes = (year_root / "00_Jahresuebersicht.pdf").read_bytes()
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_fiscal_year_open_items_across_calendar_year_boundary_deviating_fiscal_year(tmp_path):
+    # Wirtschaftsjahr Juli 2025 - Juni 2026: dieselben relativen Monate wie
+    # oben (Monat 2/3/3/6 des Geschaeftsjahres), aber ueber den
+    # Kalenderjahreswechsel hinweg (Februar/Maerz/Juni 2026 statt 2025).
+    fiscal_config = {"calendar_year": False, "start_month": 7}
+    transactions = [
+        make_transaction(id_="001", date_=date(2025, 7, 5), status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="002", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None),
+        make_transaction(id_="003", date_=date(2026, 3, 12), status=TxStatus.MULTI_MATCH, row_index=None),
+        make_transaction(id_="004", date_=date(2026, 3, 20), status=TxStatus.DUPLICATE_SUSPECT, row_index=None),
+        make_transaction(id_="005", date_=date(2026, 6, 18), status=TxStatus.SPLIT_PAYMENT, row_index=None),
+    ]
+    month_strs = get_fiscal_year_months(2025, fiscal_config)
+    total_open, months_with_open = fiscal_year_open_items_summary(transactions, month_strs)
+    assert total_open == 4
+    assert set(months_with_open) == {"Februar 2026", "März 2026", "Juni 2026"}
+
+    year_root = export_fiscal_year(tmp_path, 2025, fiscal_config, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+    assert year_root.name == "Jahresexport_2025-2026"
+    assert (year_root / "2025-07_Juli").is_dir()
+    assert (year_root / "2026-02_Februar").is_dir()
+    assert (year_root / "2026-06_Juni").is_dir()
+
+    offene_rows = _rows((year_root / "00_Offene_Posten_Jahr.csv").read_bytes())
+    detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    detail_rows = offene_rows[detail_header_idx + 1:]
+    assert len(detail_rows) == 4
+    assert {row[0] for row in detail_rows} == {"2026-02", "2026-03", "2026-06"}
+
+
+def test_fiscal_year_no_warning_when_everything_resolved(tmp_path):
+    # Vorab-Warnung darf NICHT feuern, wenn nichts offen ist.
+    transactions = [
+        make_transaction(id_="001", date_=date(2026, 1, 5), status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="002", date_=date(2026, 6, 1), status=TxStatus.TAGGED, tag="EINZAHLUNG", row_index=None),
+    ]
+    fiscal_config = {"calendar_year": True}
+    month_strs = get_fiscal_year_months(2026, fiscal_config)
+    total_open, months_with_open = fiscal_year_open_items_summary(transactions, month_strs)
+    assert total_open == 0
+    assert months_with_open == []
