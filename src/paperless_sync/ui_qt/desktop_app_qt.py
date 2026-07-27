@@ -55,6 +55,7 @@ from paperless_sync.core.config_manager import get_resource_dir, get_enable_bank
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
+from paperless_sync.core.match_candidate import MatchReasonType
 from paperless_sync.core.exporter import count_open_items
 from version import __version__
 
@@ -970,7 +971,11 @@ class DesktopAppQt(QMainWindow):
         return card
 
     def _build_ambiguous_picker(self, outer: QVBoxLayout, tx: dict):
-        candidates = tx.get("candidate_docs") or []
+        # Nur Kandidaten mit genau einem Dokument sind hier waehlbar (siehe
+        # Controller.on_ambiguous_doc_selected) - Duplikat-/Teilzahlungs-
+        # Kandidaten (documents-Laenge 0 bzw. >1) haben noch keine eigene
+        # Karte/Aktion, das ist ein spaeterer UI-Schritt.
+        candidates = [c for c in (tx.get("candidate_docs") or []) if len(c.get("documents") or []) == 1]
         row = QHBoxLayout()
         combo = NoScrollComboBox()
         combo.setStyleSheet(
@@ -984,8 +989,8 @@ class DesktopAppQt(QMainWindow):
         # Dropdown-Liste selbst bleibt unveraendert vollstaendig lesbar.
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(20)
-        labels = [self._candidate_label(d) for d in candidates]
-        label_to_doc = {label: doc for label, doc in zip(labels, candidates)}
+        labels = [self._candidate_label(c) for c in candidates]
+        label_to_doc = {label: c["documents"][0] for label, c in zip(labels, candidates)}
         combo.addItems(labels or [tr("Keine Kandidaten geladen")])
         row.addWidget(combo, stretch=1)
 
@@ -1010,11 +1015,14 @@ class DesktopAppQt(QMainWindow):
         outer.addLayout(row)
 
     @staticmethod
-    def _candidate_label(doc: dict) -> str:
+    def _candidate_label(candidate: dict) -> str:
+        doc = candidate["documents"][0]
         label = f"#{doc['id']} - {doc['title'] or doc.get('original_file_name') or tr('ohne Titel')}"
         if doc.get("correspondent_name"):
             label += f" · {doc['correspondent_name']}"
         label += f" · {doc['date'].strftime('%d.%m.%Y') if doc.get('date') else tr('kein Datum')}"
+        if candidate.get("reason_type") == MatchReasonType.TOLERANT_AMOUNT:
+            label += f" · Δ {candidate['amount_delta']:+.2f} EUR (kein exakter Treffer)"
         return label
 
     def _build_tag_row(self, outer: QVBoxLayout, tx: dict):

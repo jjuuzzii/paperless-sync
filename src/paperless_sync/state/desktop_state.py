@@ -21,6 +21,7 @@ from paperless_sync.core.config_manager import (
 from .session_store import save_session, load_session
 from paperless_sync.core.paperless_client import PaperlessClient
 from paperless_sync.core.tx_status import TxStatus, OPEN_STATUSES, DONE_STATUSES
+from paperless_sync.core.match_candidate import MatchCandidate, MatchReasonType
 from paperless_sync.core import secrets_manager
 
 # Alte, vor Einfuehrung von TxStatus persistierte Sitzungen kennen den
@@ -165,6 +166,7 @@ class AppState:
         self.transactions = restored.get("transactions") or []
         self._backfill_display_numbers()
         self._backfill_matched_docs()
+        self._backfill_candidate_docs()
         self._backfill_status()
         self.reapply_counterparty_mapping()
 
@@ -200,6 +202,34 @@ class AppState:
                 continue
             legacy = t.pop("matched_doc", None)
             t["matched_docs"] = [legacy] if legacy else []
+            changed = True
+        if changed:
+            self.persist_session()
+
+    def _backfill_candidate_docs(self) -> None:
+        """Aeltere Sitzungen kennen tx['candidate_docs'] (bei MULTI_MATCH)
+        noch als flache Liste roher Paperless-Dokument-Dicts statt als Liste
+        MatchCandidate.to_dict()-Eintraegen (siehe matcher.match_transactions
+        - vor diesem Upgrade der einzige Fall, der candidate_docs ueberhaupt
+        befuellte, immer ein exakter Mehrfachtreffer). Erkennt die alte Form
+        am fehlenden 'documents'-Schluessel im ersten Eintrag und wrappt
+        verlustfrei nach (reason_type=EXACT_AMOUNT_MULTI, confidence=1.0,
+        documents=[alter_eintrag]). Tastet Status/Tags/Matches sonst nicht
+        an."""
+        changed = False
+        for t in self.transactions:
+            candidates = t.get("candidate_docs")
+            if not candidates or "documents" in candidates[0]:
+                continue
+            t["candidate_docs"] = [
+                MatchCandidate(
+                    reason_type=MatchReasonType.EXACT_AMOUNT_MULTI,
+                    confidence=1.0,
+                    reason_detail="Betrag tritt mehrfach auf - bitte manuell zuordnen",
+                    documents=[doc],
+                ).to_dict()
+                for doc in candidates
+            ]
             changed = True
         if changed:
             self.persist_session()

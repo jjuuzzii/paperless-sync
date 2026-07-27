@@ -218,7 +218,7 @@ class Controller:
             flag_duplicate_suspects(state.transactions)
 
         docs = fetch_and_prepare_paperless_docs(state.client, state.config["amount_detection"])
-        match_transactions(state.transactions, docs)
+        match_transactions(state.transactions, docs, state.config["amount_matching"])
         state.matched_once = True
         state.paperless_docs_raw = docs
         state.persist_session()
@@ -354,16 +354,24 @@ class Controller:
         self.state.persist_session()
 
     def on_ambiguous_doc_selected(self, transaction_id: str, paperless_doc_id: int) -> None:
-        """Manuelle Aufloesung eines Mehrfach-Matches (status 'unclear') -
-        der Nutzer waehlt aus den bereits ermittelten Kandidaten
-        (tx['candidate_docs'], NICHT aus der vollen Dokumentliste) das
-        richtige Dokument aus."""
+        """Manuelle Aufloesung eines Einzel-Dokument-Kandidaten (MULTI_MATCH -
+        egal ob exakter Mehrfachtreffer oder Toleranz-Vorschlag, siehe
+        matcher.MatchCandidate/MatchReasonType). Der Nutzer waehlt aus den
+        bereits ermittelten Kandidaten (tx['candidate_docs'], NICHT aus der
+        vollen Dokumentliste) das richtige EINZELNE Dokument aus - dafuer
+        kommen nur Kandidaten mit genau einem Dokument in Frage (Duplikat-/
+        Teilzahlungs-Kandidaten haben documents-Laenge 0 bzw. >1 und tragen
+        stattdessen related_transaction_id, dafuer gibt es noch keine
+        Aufloesungs-Aktion)."""
         tx = self._find_tx(transaction_id)
         candidates = tx.get("candidate_docs") or []
-        doc = next((d for d in candidates if d["id"] == paperless_doc_id), None)
-        if doc is None:
+        match = next(
+            (c for c in candidates if len(c.get("documents") or []) == 1 and c["documents"][0]["id"] == paperless_doc_id),
+            None,
+        )
+        if match is None:
             raise ValueError(f"Dokument #{paperless_doc_id} ist kein Kandidat fuer diese Transaktion.")
-        self._apply_matched_doc(transaction_id, doc)
+        self._apply_matched_doc(transaction_id, match["documents"][0])
 
     def _apply_matched_doc(self, transaction_id: str, doc: dict) -> None:
         tx = self._find_tx(transaction_id)

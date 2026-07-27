@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 from dateutil import parser as dateparser
 
@@ -210,30 +211,140 @@ def fetch_and_prepare_paperless_docs(client, amount_detection: dict) -> list[dic
     return prepared
 
 
-def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> None:
+_DATE_SCORE_WINDOW_DAYS = 30  # danach traegt die Datumsnaehe nichts mehr zur Konfidenz bei
+_TOLERANT_SCORE_WEIGHTS = {"amount": 0.6, "date": 0.25, "text": 0.15}
+
+
+def _amount_closeness_score(candidate_amount: float, target_amount: float, tolerance_abs: float, tolerance_pct: float) -> float:
+    """1.0 = exakt gleich, 0.0 = genau an der (guenstigeren der beiden
+    ODER-verknuepften) Toleranzgrenze. Ein Kandidat landet ueberhaupt nur
+    im Pool, weil MINDESTENS eine der beiden Toleranzen erfuellt ist -
+    bewertet wird dementsprechend nach der guenstigeren."""
+    diff = abs(candidate_amount - target_amount)
+    if diff == 0:
+        return 1.0
+    abs_ratio = diff / tolerance_abs if tolerance_abs > 0 else float("inf")
+    pct_budget = target_amount * tolerance_pct
+    pct_ratio = diff / pct_budget if pct_budget > 0 else float("inf")
+    return max(0.0, 1.0 - min(abs_ratio, pct_ratio, 1.0))
+
+
+def _date_proximity_score(doc_date, tx_date) -> float:
+    """0.5 (neutral) wenn eines der beiden Daten fehlt - fehlende Info soll
+    nicht bestrafen (Paperless-'created' ist z.B. nicht bei jedem Dokument
+    aussagekraeftig). Sonst linear abfallend innerhalb von
+    _DATE_SCORE_WINDOW_DAYS."""
+    if doc_date is None or tx_date is None:
+        return 0.5
+    days = abs((doc_date - tx_date).days)
+    if days >= _DATE_SCORE_WINDOW_DAYS:
+        return 0.0
+    return 1.0 - (days / _DATE_SCORE_WINDOW_DAYS)
+
+
+def _text_similarity_score(a: str, b: str) -> float:
+    """0.5 (neutral) wenn einer der beiden Texte leer ist. Sonst
+    difflib.SequenceMatcher (Standardbibliothek, keine neue Abhaengigkeit)
+    zwischen Korrespondent-Name und Verwendungszweck/Zahlungsbeteiligtem -
+    niedrig gewichtet, weil beides oft nichts inhaltlich Vergleichbares
+    gemein hat."""
+    if not a or not b:
+        return 0.5
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def find_tolerant_candidates(
+    tx: dict, candidates_pool: list[dict], used_doc_ids: set, tolerance_abs: float, tolerance_pct: float, top_n: int
+) -> list[dict]:
+    """Nur aufgerufen, wenn der exakte Betragsabgleich 0 Treffer fand. Ein
+    Dokument wird Kandidat, sobald es INNERHALB der absoluten ODER der
+    prozentualen Toleranz liegt (siehe match_transactions-Docstring fuer die
+    Begruendung der ODER-Verknuepfung). Konfidenz aus Betrag/Datum/Text
+    gewichtet (siehe _TOLERANT_SCORE_WEIGHTS), absteigend sortiert, auf
+    top_n gekappt. Gibt fertige MatchCandidate.to_dict()-Eintraege zurueck."""
+    scored = []
+    for doc in candidates_pool:
+        if doc["id"] in used_doc_ids:
+            continue
+        diff = abs(doc["amount"] - tx["amount_abs"])
+        pct_budget = tx["amount_abs"] * tolerance_pct
+        within_abs = tolerance_abs > 0 and diff <= tolerance_abs
+        within_pct = pct_budget > 0 and diff <= pct_budget
+        if not (within_abs or within_pct):
+            continue
+        amount_score = _amount_closeness_score(doc["amount"], tx["amount_abs"], tolerance_abs, tolerance_pct)
+        date_score = _date_proximity_score(doc.get("date"), tx["date"])
+        text_score = _text_similarity_score(doc.get("correspondent_name") or "", tx.get("counterparty") or tx.get("purpose") or "")
+        weights = _TOLERANT_SCORE_WEIGHTS
+        confidence = weights["amount"] * amount_score + weights["date"] * date_score + weights["text"] * text_score
+        amount_delta = round(doc["amount"] - tx["amount_abs"], 2)
+        scored.append((confidence, doc, amount_delta))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [
+        MatchCandidate(
+            reason_type=MatchReasonType.TOLERANT_AMOUNT,
+            confidence=round(confidence, 3),
+            reason_detail=(
+                f"Kein exakter Treffer - Dokumentbetrag {doc['amount']:.2f} EUR weicht "
+                f"{abs(amount_delta):.2f} EUR vom Buchungsbetrag ({tx['amount_abs']:.2f} EUR) ab, "
+                f"innerhalb der eingestellten Toleranz"
+            ),
+            documents=[doc],
+            amount_delta=amount_delta,
+        ).to_dict()
+        for confidence, doc, amount_delta in scored[:top_n]
+    ]
+
+
+def match_transactions(transactions: list[dict], paperless_docs: list[dict], amount_matching: dict | None = None) -> None:
     """Gleicht alle Transaktionen ab, die noch nicht manuell entschieden
     wurden (TAGGED/MATCHED bleiben unangetastet - MATCHED deckt auch bereits
-    hochgeladene PDFs ab, siehe TxStatus). Aendert die uebergebenen
+    hochgeladene PDFs ab, siehe TxStatus) und die nicht als DUPLICATE_SUSPECT
+    markiert sind (siehe flag_duplicate_suspects - muss vor dieser Funktion
+    laufen, sonst koennte derselbe Beleg beiden Buchungen eines
+    Duplikat-Paars zugeordnet werden). Aendert die uebergebenen
     Transaktions-Dicts in-place.
 
-    Match-Regel: NUR der Betrag muss exakt uebereinstimmen (auf 2
-    Nachkommastellen gerundet) - kein Zeitfenster/Datumsabgleich, Belege
-    koennen beliebig lange vor oder nach der Buchung in Paperless liegen.
-    Tritt der Betrag mehrfach auf, wird NICHT geraten - die Transaktion
-    wandert als MULTI_MATCH in Fehlt/Unklar. Jedes Paperless-Dokument wird
-    hoechstens einer Transaktion zugeordnet.
-    """
+    Ablauf je Transaktion:
+    1. Exakter Betrag (auf 2 Nachkommastellen gerundet), GENAU 1 Treffer ->
+       automatisch MATCHED, wie bisher. Kein Zeitfenster/Datumsabgleich -
+       Belege koennen beliebig lange vor/nach der Buchung in Paperless
+       liegen.
+    2. Exakter Betrag, MEHRERE Treffer -> MULTI_MATCH, ein MatchCandidate
+       (reason_type=EXACT_AMOUNT_MULTI, confidence=1.0) je Dokument -
+       manuelle Auswahl noetig, es wird nicht geraten.
+    3. Exakter Betrag, KEIN Treffer -> Toleranz-Fallback
+       (find_tolerant_candidates, amount_matching-Config). Werden dabei
+       Kandidaten gefunden -> ebenfalls MULTI_MATCH (bewusst NIE
+       automatisch MATCHED, auch nicht bei genau einem Toleranz-Kandidaten:
+       Toleranz ist per Definition unsicher, anders als der exakte Betrag).
+       Kein Kandidat -> UNRESOLVED.
+
+    tx['candidate_docs'] ist in allen drei Faellen eine einheitliche Liste
+    von MatchCandidate.to_dict()-Eintraegen (siehe match_candidate.py) -
+    auch der bisherige exakte Mehrfachtreffer wird jetzt so verpackt, damit
+    Controller/UI nur einen Konsum-Pfad brauchen.
+
+    Jedes Paperless-Dokument wird hoechstens einer Transaktion zugeordnet
+    (matched_docs) bzw. als Kandidat vorgeschlagen, wenn es bereits einer
+    anderen Transaktion fest zugeordnet ist."""
+    amount_matching = amount_matching or {}
+    tolerance_abs = amount_matching.get("tolerance_abs", 0.0)
+    tolerance_pct = amount_matching.get("tolerance_pct", 0.0)
+    top_n = amount_matching.get("top_n_candidates", 3)
+
     candidates_pool = [d for d in paperless_docs if d["amount"] is not None]
     used_doc_ids = set()
 
     # Bereits zugeordnete Dokumente (automatischer Match ODER manuell
-    # aufgeloester Mehrfach-Match aus einem frueheren Abgleich) gelten als
-    # "vergeben", noch BEVOR die eigentliche Zuordnungsschleife laeuft -
-    # sonst koennten sie bei einem erneuten Abgleich (z.B. nach neu
+    # aufgeloester Mehrfach-/Toleranz-Match aus einem frueheren Abgleich)
+    # gelten als "vergeben", noch BEVOR die eigentliche Zuordnungsschleife
+    # laeuft - sonst koennten sie bei einem erneuten Abgleich (z.B. nach neu
     # hochgeladenen Belegen) einer ANDEREN, noch offenen Transaktion mit
-    # demselben Betrag angeboten werden.
+    # aehnlichem Betrag angeboten werden.
     for tx in transactions:
-        if tx["status"] in (TxStatus.TAGGED, TxStatus.MATCHED):
+        if tx["status"] in _LOCKED_STATUSES:
             for doc in tx.get("matched_docs") or []:
                 used_doc_ids.add(doc["id"])
 
@@ -241,32 +352,46 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict]) -> 
         # MATCHED bewusst mit ausgenommen (deckt auch bereits hochgeladene
         # PDFs ab, siehe TxStatus): sonst wuerde ein erneuter Abgleich eine
         # manuell aus mehreren Kandidaten aufgeloeste Zuordnung (siehe
-        # Controller.on_ambiguous_doc_selected) wieder verwerfen, sobald der
-        # Betrag weiterhin mehrfach vorkommt - was er bei einem echten
-        # Mehrfach-Match fast immer tut.
-        if tx["status"] in (TxStatus.TAGGED, TxStatus.MATCHED):
+        # Controller.on_ambiguous_doc_selected) wieder verwerfen. DUPLICATE_
+        # SUSPECT wird ebenfalls uebersprungen (siehe Docstring oben).
+        if tx["status"] in _LOCKED_STATUSES or tx["status"] == TxStatus.DUPLICATE_SUSPECT:
             continue
 
-        candidates = [
+        exact_candidates = [
             d
             for d in candidates_pool
             if d["id"] not in used_doc_ids and round(d["amount"], 2) == round(tx["amount_abs"], 2)
         ]
 
-        if len(candidates) == 1:
-            doc = candidates[0]
+        if len(exact_candidates) == 1:
+            doc = exact_candidates[0]
             used_doc_ids.add(doc["id"])
             tx["status"] = TxStatus.MATCHED
             tx["matched_docs"] = [doc]
             tx["candidate_docs"] = None
             tx["note"] = ""
-        elif len(candidates) == 0:
-            tx["status"] = TxStatus.UNRESOLVED
-            tx["matched_docs"] = []
-            tx["candidate_docs"] = None
-            tx["note"] = ""
-        else:
+        elif len(exact_candidates) > 1:
             tx["status"] = TxStatus.MULTI_MATCH
             tx["matched_docs"] = []
-            tx["candidate_docs"] = candidates  # fuer die manuelle Auswahl in der UI
+            tx["candidate_docs"] = [
+                MatchCandidate(
+                    reason_type=MatchReasonType.EXACT_AMOUNT_MULTI,
+                    confidence=1.0,
+                    reason_detail="Betrag tritt mehrfach auf - bitte manuell zuordnen",
+                    documents=[doc],
+                ).to_dict()
+                for doc in exact_candidates
+            ]
             tx["note"] = "Achtung: Betrag tritt mehrfach auf - Bitte manuell zuordnen"
+        else:
+            tolerant = find_tolerant_candidates(tx, candidates_pool, used_doc_ids, tolerance_abs, tolerance_pct, top_n)
+            if tolerant:
+                tx["status"] = TxStatus.MULTI_MATCH
+                tx["matched_docs"] = []
+                tx["candidate_docs"] = tolerant
+                tx["note"] = "Kein exakter Treffer - moegliche Kandidaten innerhalb der Toleranz gefunden, bitte pruefen"
+            else:
+                tx["status"] = TxStatus.UNRESOLVED
+                tx["matched_docs"] = []
+                tx["candidate_docs"] = None
+                tx["note"] = ""
