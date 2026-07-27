@@ -56,6 +56,7 @@ from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
 from paperless_sync.core.exporter import count_open_items
+from paperless_sync.core.csv_utils import parse_date
 from version import __version__
 
 # Persoenliche, NICHT-oeffentliche Erweiterung (siehe .gitignore) - existiert
@@ -86,6 +87,47 @@ STATUS_BADGES = {
     TxStatus.DUPLICATE_SUSPECT: ("DUPLIKAT-VERDACHT", "purple"),
     TxStatus.SPLIT_PAYMENT: ("TEILZAHLUNG?", "teal"),
 }
+
+
+def _parse_amount_filter(text: str):
+    """'50' -> (50.0, 50.0) exakt, '50-100' -> (50.0, 100.0) Bereich, leer/
+    ungueltig -> None (kein Filter aktiv). Bindestrich-Suche startet erst ab
+    Position 1, damit ein fuehrendes '-' (Vorzeichen eines negativen
+    Einzelwerts wie '-50') nicht faelschlich als Bereichs-Trenner gilt."""
+    text = text.strip().replace(",", ".")
+    if not text:
+        return None
+    dash_index = text.find("-", 1)
+    if dash_index != -1:
+        try:
+            lo = float(text[:dash_index])
+            hi = float(text[dash_index + 1 :])
+        except ValueError:
+            return None
+        return (min(lo, hi), max(lo, hi))
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return (value, value)
+
+
+def _transaction_matches_filter(tx: dict, query_text: str, amount_range, date_from, date_to) -> bool:
+    """Kombiniert Freitext (Verwendungszweck/Absender-Empfaenger), Betrags-
+    und Datumsbereich per UND - siehe Suchfeld in _build_main_area."""
+    if query_text:
+        haystack = f"{tx.get('purpose') or ''} {tx.get('counterparty') or ''}".lower()
+        if query_text.lower() not in haystack:
+            return False
+    if amount_range is not None:
+        lo, hi = amount_range
+        if not (lo <= tx["amount_abs"] <= hi):
+            return False
+    if date_from is not None and tx["date"] < date_from:
+        return False
+    if date_to is not None and tx["date"] > date_to:
+        return False
+    return True
 
 
 def _display_purpose(purpose: str, noise_terms: list[str] | None = None) -> str:
@@ -204,6 +246,13 @@ class CardFrame(QFrame):
             f"QFrame {{ background-color: {bg}; border: {border_width}px solid {border_color}; "
             f"border-radius: 14px; }}"
         )
+
+
+def _entry_style() -> str:
+    return (
+        f"QLineEdit {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
+        f"border-radius: 10px; padding: 8px; border: none; }}"
+    )
 
 
 def _outline_button(text: str, color: str) -> QPushButton:
@@ -564,6 +613,8 @@ class DesktopAppQt(QMainWindow):
         main_layout.addLayout(kpi_row)
         main_layout.addSpacing(14)
 
+        self._build_filter_row(main_layout)
+
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(
             f"QTabWidget::pane {{ background-color: {COLORS['bg_kpi']}; border-radius: 16px; border: none; }}"
@@ -577,9 +628,87 @@ class DesktopAppQt(QMainWindow):
 
         self.action_scroll, self.action_container, self.action_layout = self._build_scroll_tab()
         self.tabs.addTab(self.action_scroll, f"⚠️  {tr('Unklar / Fehlt')}")
+        self.tabs.currentChanged.connect(lambda _index: self._update_filter_hint())
 
         main_layout.addWidget(self.tabs)
         root_layout.addWidget(main)
+
+    def _build_filter_row(self, main_layout: QVBoxLayout):
+        """Suchfeld + Betrags-/Datumsbereich, live filternd, kombinierbar
+        mit den Tabs "Erfolgreich"/"Unklar / Fehlt" (UND-Verknuepfung, siehe
+        _render_tabs). Darunter ein Transparenz-Hinweis, wie viele
+        Buchungen der aktuelle Filter (Tab + Suche) gerade zeigt - ohne
+        das koennten z.B. Luecken in der Nummern-Sequenz (#001, #002, #005)
+        wie verlorene Buchungen wirken, obwohl nur gefiltert wird."""
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(f"🔍  {tr('Suchen (Verwendungszweck, Absender/Empfänger)...')}")
+        self.search_edit.setStyleSheet(_entry_style())
+        self.search_edit.textChanged.connect(self._on_filter_changed)
+        filter_row.addWidget(self.search_edit, stretch=2)
+
+        self.amount_filter_edit = QLineEdit()
+        self.amount_filter_edit.setPlaceholderText(tr("Betrag (z.B. 50 oder 50-100)"))
+        self.amount_filter_edit.setStyleSheet(_entry_style())
+        self.amount_filter_edit.setFixedWidth(170)
+        self.amount_filter_edit.textChanged.connect(self._on_filter_changed)
+        filter_row.addWidget(self.amount_filter_edit)
+
+        self.date_from_edit = QLineEdit()
+        self.date_from_edit.setPlaceholderText(tr("Von (TT.MM.JJJJ)"))
+        self.date_from_edit.setStyleSheet(_entry_style())
+        self.date_from_edit.setFixedWidth(120)
+        self.date_from_edit.textChanged.connect(self._on_filter_changed)
+        filter_row.addWidget(self.date_from_edit)
+
+        self.date_to_edit = QLineEdit()
+        self.date_to_edit.setPlaceholderText(tr("Bis (TT.MM.JJJJ)"))
+        self.date_to_edit.setStyleSheet(_entry_style())
+        self.date_to_edit.setFixedWidth(120)
+        self.date_to_edit.textChanged.connect(self._on_filter_changed)
+        filter_row.addWidget(self.date_to_edit)
+
+        reset_btn = QPushButton(f"✕ {tr('Zurücksetzen')}")
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.setStyleSheet(self._flat_button_style())
+        reset_btn.clicked.connect(self._on_filter_reset)
+        filter_row.addWidget(reset_btn)
+
+        main_layout.addLayout(filter_row)
+        main_layout.addSpacing(6)
+
+        self.filter_hint_label = QLabel("")
+        self.filter_hint_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt;")
+        main_layout.addWidget(self.filter_hint_label)
+        main_layout.addSpacing(8)
+
+    def _on_filter_changed(self, _text: str = ""):
+        self._render_tabs()
+
+    def _on_filter_reset(self):
+        for edit in (self.search_edit, self.amount_filter_edit, self.date_from_edit, self.date_to_edit):
+            edit.blockSignals(True)
+            edit.clear()
+            edit.blockSignals(False)
+        self._render_tabs()
+
+    def _current_filter_values(self):
+        query_text = self.search_edit.text().strip()
+        amount_range = _parse_amount_filter(self.amount_filter_edit.text())
+        date_from = parse_date(self.date_from_edit.text()) if self.date_from_edit.text().strip() else None
+        date_to = parse_date(self.date_to_edit.text()) if self.date_to_edit.text().strip() else None
+        return query_text, amount_range, date_from, date_to
+
+    def _update_filter_hint(self):
+        if self.tabs.currentIndex() == 0:
+            shown, total, label = self._success_shown_count, self._success_total_count, tr("Erfolgreich")
+        else:
+            shown, total, label = self._action_shown_count, self._action_total_count, tr("Unklar / Fehlt")
+        self.filter_hint_label.setText(
+            tr("{shown} von {total} Buchungen sichtbar (Filter: {label})", shown=shown, total=total, label=label)
+        )
 
     def _build_scroll_tab(self):
         scroll = QScrollArea()
@@ -680,7 +809,13 @@ class DesktopAppQt(QMainWindow):
         self._clear_layout(self.action_layout)
         self._card_widgets.clear()
 
-        success_txs = self.app_state.success_transactions
+        query_text, amount_range, date_from, date_to = self._current_filter_values()
+
+        def _filtered(txs):
+            return [t for t in txs if _transaction_matches_filter(t, query_text, amount_range, date_from, date_to)]
+
+        success_txs_all = self.app_state.success_transactions
+        success_txs = _filtered(success_txs_all)
         visible_success = success_txs[: self._success_reveal]
         for tx in visible_success:
             w = self._render_success_card(tx)
@@ -691,19 +826,22 @@ class DesktopAppQt(QMainWindow):
                 self._build_load_more_button(len(success_txs) - len(visible_success), "success")
             )
         elif not success_txs:
-            self.success_layout.addWidget(self._placeholder_label(tr("Noch keine zugeordneten Belege.")))
+            placeholder = tr("Noch keine zugeordneten Belege.") if not success_txs_all else tr("Keine Treffer für die aktuellen Filter.")
+            self.success_layout.addWidget(self._placeholder_label(placeholder))
 
         # unclear_transactions (MULTI_MATCH) + review_transactions
         # (DUPLICATE_SUSPECT/SPLIT_PAYMENT) sind erfahrungsgemaess deutlich
         # weniger als missing_transactions - unpaginiert, wie bisher schon
         # bei unclear_transactions.
-        priority_txs = self.app_state.unclear_transactions + self.app_state.review_transactions
+        priority_txs_all = self.app_state.unclear_transactions + self.app_state.review_transactions
+        priority_txs = _filtered(priority_txs_all)
         for tx in priority_txs:
             w = self._render_action_card(tx)
             self.action_layout.addWidget(w)
             self._card_widgets[tx["id"]] = w
 
-        missing_txs = self.app_state.missing_transactions
+        missing_txs_all = self.app_state.missing_transactions
+        missing_txs = _filtered(missing_txs_all)
         visible_missing = missing_txs[: self._action_reveal]
         for tx in visible_missing:
             w = self._render_action_card(tx)
@@ -714,7 +852,16 @@ class DesktopAppQt(QMainWindow):
                 self._build_load_more_button(len(missing_txs) - len(visible_missing), "action")
             )
         elif not missing_txs and not priority_txs:
-            self.action_layout.addWidget(self._placeholder_label(tr("Alles zugeordnet! 🎉")))
+            if missing_txs_all or priority_txs_all:
+                self.action_layout.addWidget(self._placeholder_label(tr("Keine Treffer für die aktuellen Filter.")))
+            else:
+                self.action_layout.addWidget(self._placeholder_label(tr("Alles zugeordnet! 🎉")))
+
+        self._success_shown_count = len(success_txs)
+        self._success_total_count = len(success_txs_all)
+        self._action_shown_count = len(priority_txs) + len(missing_txs)
+        self._action_total_count = len(priority_txs_all) + len(missing_txs_all)
+        self._update_filter_hint()
 
     def _placeholder_label(self, text: str) -> QLabel:
         lbl = QLabel(text)

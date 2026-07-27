@@ -60,6 +60,12 @@ _EN: dict[str, str] = {
     "TEILZAHLUNG?": "SPLIT PAYMENT?",
     "Erfolgreich": "Successful",
     "Unklar / Fehlt": "Unclear / Missing",
+    "Suchen (Verwendungszweck, Absender/Empfänger)...": "Search (purpose, sender/recipient)...",
+    "Betrag (z.B. 50 oder 50-100)": "Amount (e.g. 50 or 50-100)",
+    "Von (TT.MM.JJJJ)": "From (DD.MM.YYYY)",
+    "Bis (TT.MM.JJJJ)": "To (DD.MM.YYYY)",
+    "Keine Treffer für die aktuellen Filter.": "No matches for the current filters.",
+    "{shown} von {total} Buchungen sichtbar (Filter: {label})": "{shown} of {total} transactions visible (filter: {label})",
 
     # --- Karten (Erfolg/Aktion) -------------------------------------------
     "Noch keine zugeordneten Belege.": "No matched receipts yet.",
