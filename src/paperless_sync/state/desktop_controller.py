@@ -16,6 +16,7 @@ from paperless_sync.core.matcher import (
     fetch_and_prepare_paperless_docs,
     match_transactions,
     flag_duplicate_suspects,
+    find_split_payment_candidates,
     normalize_purpose,
 )
 from paperless_sync.core.exporter import generate_export
@@ -219,6 +220,10 @@ class Controller:
 
         docs = fetch_and_prepare_paperless_docs(state.client, state.config["amount_detection"])
         match_transactions(state.transactions, docs, state.config["amount_matching"])
+
+        if state.config.get("split_payment", {}).get("enabled", True):
+            find_split_payment_candidates(state.transactions, docs, state.config["amount_matching"], state.config["split_payment"])
+
         state.matched_once = True
         state.paperless_docs_raw = docs
         state.persist_session()

@@ -1,6 +1,7 @@
 """Transaktions-Aufbau und Abgleich gegen Paperless-Dokumente."""
 from __future__ import annotations
 
+import itertools
 import re
 from difflib import SequenceMatcher
 
@@ -395,3 +396,194 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict], amo
                 tx["matched_docs"] = []
                 tx["candidate_docs"] = None
                 tx["note"] = ""
+
+
+def _used_doc_ids(transactions: list[dict]) -> set:
+    """Alle Paperless-Dokument-IDs, die bereits fest zugeordnet sind
+    (matched_docs) - Dokumente, die schon eine Buchung erledigen, kommen
+    fuer eine Teilzahlungs-Kombination nicht mehr in Frage."""
+    used = set()
+    for tx in transactions:
+        for doc in tx.get("matched_docs") or []:
+            used.add(doc["id"])
+    return used
+
+
+def _within_day_window(date_a, date_b, day_window: int) -> bool:
+    if date_a is None or date_b is None:
+        return False
+    return abs((date_a - date_b).days) <= day_window
+
+
+def _combo_amount_score(combo_amounts: list, target: float, tolerance_abs: float, tolerance_pct: float):
+    """Wie find_tolerant_candidates, aber fuer die SUMME mehrerer Betraege
+    gegen einen Zielbetrag. Gibt (confidence, amount_delta) zurueck, oder
+    None, wenn die Summe ausserhalb beider (ODER-verknuepfter) Toleranzen
+    liegt. Nutzt denselben _amount_closeness_score-Baustein wie das
+    Toleranz-Matching - das Zeitfenster ist hier bereits ein harter
+    Vorfilter (siehe _within_day_window), keine eigene Score-Komponente."""
+    total = round(sum(combo_amounts), 2)
+    diff = abs(total - target)
+    pct_budget = target * tolerance_pct
+    within_abs = tolerance_abs > 0 and diff <= tolerance_abs
+    within_pct = pct_budget > 0 and diff <= pct_budget
+    if diff > 0 and not (within_abs or within_pct):
+        return None
+    confidence = _amount_closeness_score(total, target, tolerance_abs, tolerance_pct)
+    amount_delta = round(total - target, 2)
+    return confidence, amount_delta
+
+
+def _flag_split_case_a(transactions: list[dict], doc_pool: list[dict], tolerance_abs: float, tolerance_pct: float, day_window: int):
+    """Fall A: EIN Dokument = Summe ZWEIER UNRESOLVED-Buchungen im
+    Zeitfenster um das Belegdatum (z.B. Anzahlung + Restzahlung, ein Beleg
+    fuer zwei einzeln abgebuchte Raten). Pro Dokument nur das BESTE Paar;
+    eine einmal verplante Buchung wird fuer weitere Dokumente in diesem
+    Lauf gesperrt (verhindert, dass dieselbe Buchung mehreren
+    unterschiedlichen Belegen gleichzeitig als Teilzahlungs-Partner
+    vorgeschlagen wird). Gibt (Anzahl neu markierter Buchungen, Menge der
+    dafuer verplanten Dokument-IDs) zurueck - Letzteres, damit Fall B
+    dieselben Dokumente nicht nochmal verwendet."""
+    flagged = 0
+    used_tx_ids: set = set()
+    used_doc_ids_here: set = set()
+    for doc in doc_pool:
+        candidates_tx = [
+            t
+            for t in transactions
+            if t["id"] not in used_tx_ids
+            and t["status"] == TxStatus.UNRESOLVED
+            and _within_day_window(t["date"], doc["date"], day_window)
+        ]
+        best = None
+        for tx_a, tx_b in itertools.combinations(candidates_tx, 2):
+            result = _combo_amount_score([tx_a["amount_abs"], tx_b["amount_abs"]], doc["amount"], tolerance_abs, tolerance_pct)
+            if result is None:
+                continue
+            confidence, amount_delta = result
+            if best is None or confidence > best[0]:
+                best = (confidence, tx_a, tx_b, amount_delta)
+        if best is None:
+            continue
+        confidence, tx_a, tx_b, amount_delta = best
+        used_tx_ids.add(tx_a["id"])
+        used_tx_ids.add(tx_b["id"])
+        used_doc_ids_here.add(doc["id"])
+        for this_tx, other_tx in ((tx_a, tx_b), (tx_b, tx_a)):
+            this_tx["status"] = TxStatus.SPLIT_PAYMENT
+            this_tx["candidate_docs"] = [
+                MatchCandidate(
+                    reason_type=MatchReasonType.SPLIT_PAYMENT_DOC_SUM,
+                    confidence=round(confidence, 3),
+                    reason_detail=(
+                        f"Beleg {doc['amount']:.2f} EUR koennte zusammen mit Buchung "
+                        f"#{other_tx.get('display_number') or other_tx['id']} diese Teilzahlung ergeben"
+                    ),
+                    documents=[doc],
+                    related_transaction_id=other_tx["id"],
+                    amount_delta=amount_delta,
+                ).to_dict()
+            ]
+            this_tx["note"] = "Moegliche Teilzahlung - ein Beleg deckt evtl. diese UND eine weitere Buchung ab"
+            flagged += 1
+    return flagged, used_doc_ids_here
+
+
+def _flag_split_case_b(
+    transactions: list[dict], doc_pool: list[dict], tolerance_abs: float, tolerance_pct: float,
+    top_n: int, day_window: int, max_documents: int, max_pool_size: int,
+) -> int:
+    """Fall B: EINE UNRESOLVED-Buchung = Summe von 2..max_documents
+    Dokumenten im Zeitfenster um das Buchungsdatum. Dokument-Pool pro
+    Buchung vorgefiltert (Betrag kleiner als der Buchungsbetrag - jede
+    Komponente einer gueltigen Summe muss das sein - und im Zeitfenster)
+    und auf max_pool_size gedeckelt: ueberschreitet der bereits gefilterte
+    Pool diese Grenze, wird Fall B fuer diese Buchung uebersprungen statt
+    eine potenziell riesige itertools.combinations-Menge zu erzeugen (mit
+    dem Default max_documents=2 ist das ohnehin nur ein Sicherheitsnetz)."""
+    flagged = 0
+    used_doc_ids_here: set = set()
+    for tx in transactions:
+        if tx["status"] != TxStatus.UNRESOLVED:
+            continue
+        pool = [
+            d
+            for d in doc_pool
+            if d["id"] not in used_doc_ids_here
+            and d["amount"] < tx["amount_abs"]
+            and _within_day_window(tx["date"], d["date"], day_window)
+        ]
+        if len(pool) > max_pool_size:
+            continue
+
+        scored = []
+        for r in range(2, max_documents + 1):
+            for combo in itertools.combinations(pool, r):
+                result = _combo_amount_score([d["amount"] for d in combo], tx["amount_abs"], tolerance_abs, tolerance_pct)
+                if result is None:
+                    continue
+                confidence, amount_delta = result
+                scored.append((confidence, combo, amount_delta))
+        if not scored:
+            continue
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top = scored[:top_n]
+        tx["status"] = TxStatus.SPLIT_PAYMENT
+        tx["candidate_docs"] = [
+            MatchCandidate(
+                reason_type=MatchReasonType.SPLIT_PAYMENT_TX_SUM,
+                confidence=round(confidence, 3),
+                reason_detail=(
+                    f"{len(combo)} Belege zusammen ({sum(d['amount'] for d in combo):.2f} EUR) koennten diese "
+                    f"Buchung ({tx['amount_abs']:.2f} EUR) als Teilzahlung ergeben"
+                ),
+                documents=list(combo),
+                amount_delta=amount_delta,
+            ).to_dict()
+            for confidence, combo, amount_delta in top
+        ]
+        tx["note"] = "Moegliche Teilzahlung - mehrere Belege zusammen koennten diese Buchung ergeben"
+        # Nur die Dokumente des BESTEN Vorschlags sperren wir fuer andere
+        # Buchungen - die uebrigen Top-N-Vorschlaege sind ohnehin nur
+        # Alternativen fuer DIESELBE Buchung, keine Konkurrenz um eine
+        # andere.
+        used_doc_ids_here.update(d["id"] for d in top[0][1])
+        flagged += 1
+    return flagged
+
+
+def find_split_payment_candidates(transactions: list[dict], paperless_docs: list[dict], amount_matching: dict, split_config: dict) -> int:
+    """Dritter Pass, NACH match_transactions() (siehe
+    desktop_controller.on_match_click). Reine Vorschlaege
+    (status=SPLIT_PAYMENT), NIE automatisch angewandt - matched_docs bleibt
+    unveraendert, eine Bestaetigung ist ein spaeterer UI+Controller-Schritt.
+    Arbeitet ausschliesslich auf Transaktionen, die nach dem exakten/
+    Toleranz-Abgleich noch UNRESOLVED sind - das ist bereits die geforderte
+    Vorbedingung "nur wenn kein einfacher Match gefunden wurde", hier aus
+    Konsistenzgruenden fuer BEIDE Faelle angewendet.
+
+    Nutzt dieselben Toleranzwerte wie das Toleranz-Matching
+    (amount_matching) statt eines eigenen Toleranz-Paars in split_config -
+    keine zwei separat zu pflegenden, semantisch identischen Einstellungen.
+
+    Wird bei jedem Abgleich neu berechnet (SPLIT_PAYMENT ist NICHT vor
+    match_transactions() geschuetzt, siehe dort) - ein zwischenzeitlich neu
+    hochgeladener Beleg kann eine fruehere Teilzahlungs-Vermutung ersetzen
+    oder aufloesen, das ist gewuenscht.
+
+    Gibt die Anzahl neu auf SPLIT_PAYMENT gesetzter Transaktionen zurueck."""
+    tolerance_abs = amount_matching.get("tolerance_abs", 0.0)
+    tolerance_pct = amount_matching.get("tolerance_pct", 0.0)
+    top_n = amount_matching.get("top_n_candidates", 3)
+    day_window = split_config.get("day_window", 14)
+    max_documents = split_config.get("max_documents", 2)
+    max_pool_size = split_config.get("max_pool_size", 8)
+
+    used_doc_ids = _used_doc_ids(transactions)
+    doc_pool = [d for d in paperless_docs if d["id"] not in used_doc_ids and d["amount"] is not None and d.get("date")]
+
+    flagged_a, used_by_a = _flag_split_case_a(transactions, doc_pool, tolerance_abs, tolerance_pct, day_window)
+    remaining_pool = [d for d in doc_pool if d["id"] not in used_by_a]
+    flagged_b = _flag_split_case_b(transactions, remaining_pool, tolerance_abs, tolerance_pct, top_n, day_window, max_documents, max_pool_size)
+    return flagged_a + flagged_b
