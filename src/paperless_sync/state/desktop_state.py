@@ -331,6 +331,18 @@ class AppState:
         return [t for t in self.visible_transactions if t["status"] == TxStatus.MULTI_MATCH]
 
     @property
+    def review_transactions(self) -> list[dict]:
+        """DUPLICATE_SUSPECT/SPLIT_PAYMENT - noch ohne eigene Kandidaten-
+        Darstellung (das ist ein separater, spaeterer UI-Schritt), aber
+        MUESSEN trotzdem irgendwo sichtbar/aufloesbar sein: sonst wuerden sie
+        aus jeder Karte/KPI verschwinden und _render_tabs koennte faelschlich
+        'Alles zugeordnet!' anzeigen, obwohl noch offene Faelle bestehen.
+        Werden vorerst wie missing_transactions als rote Karte gerendert
+        (Tag/PDF-Upload/Paperless-Auswahl ueberschreiben den Status ohnehin
+        unabhaengig vom aktuellen Wert - siehe Controller.on_apply_tag etc.)."""
+        return [t for t in self.visible_transactions if t["status"] in (TxStatus.DUPLICATE_SUSPECT, TxStatus.SPLIT_PAYMENT)]
+
+    @property
     def action_transactions(self) -> list[dict]:
         """Alle Buchungen, die noch Klaerung brauchen - siehe
         tx_status.OPEN_STATUSES (deckt auch DUPLICATE_SUSPECT/SPLIT_PAYMENT

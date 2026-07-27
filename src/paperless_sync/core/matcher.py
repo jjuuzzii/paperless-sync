@@ -80,7 +80,7 @@ def flag_duplicate_suspects(transactions: list[dict]) -> int:
                 ).to_dict()
                 for other in others
             ]
-            tx["note"] = "Moeglicher Duplikat-Fall - pruefen, ob dieselbe Buchung versehentlich zweimal importiert wurde"
+            tx["note"] = "Möglicher Duplikat-Fall - prüfen, ob dieselbe Buchung versehentlich zweimal importiert wurde"
     return newly_flagged
 
 
@@ -155,8 +155,8 @@ def collect_foreign_currency_warnings(transactions: list[dict]) -> list[str]:
     die drei bestehenden Aufrufstellen in desktop_controller.py blieben
     sonst kaputt."""
     return [
-        f"Zeile {t.get('row_index')}: Fremdwaehrung {t['foreign_currency']} erkannt (Rohbetrag {t['amount_raw']:.2f}) - "
-        f"bitte pruefen, der Betrag wurde evtl. falsch interpretiert"
+        f"Zeile {t.get('row_index')}: Fremdwährung {t['foreign_currency']} erkannt (Rohbetrag {t['amount_raw']:.2f}) - "
+        f"bitte prüfen, der Betrag wurde evtl. falsch interpretiert"
         for t in transactions
         if t.get("foreign_currency")
     ]
@@ -394,7 +394,7 @@ def match_transactions(transactions: list[dict], paperless_docs: list[dict], amo
                 tx["status"] = TxStatus.MULTI_MATCH
                 tx["matched_docs"] = []
                 tx["candidate_docs"] = tolerant
-                tx["note"] = "Kein exakter Treffer - moegliche Kandidaten innerhalb der Toleranz gefunden, bitte pruefen"
+                tx["note"] = "Kein exakter Treffer - mögliche Kandidaten innerhalb der Toleranz gefunden, bitte prüfen"
             else:
                 tx["status"] = TxStatus.UNRESOLVED
                 tx["matched_docs"] = []
@@ -480,7 +480,7 @@ def _flag_split_case_a(transactions: list[dict], doc_pool: list[dict], tolerance
                     reason_type=MatchReasonType.SPLIT_PAYMENT_DOC_SUM,
                     confidence=round(confidence, 3),
                     reason_detail=(
-                        f"Beleg {doc['amount']:.2f} EUR koennte zusammen mit Buchung "
+                        f"Beleg {doc['amount']:.2f} EUR könnte zusammen mit Buchung "
                         f"#{other_tx.get('display_number') or other_tx['id']} diese Teilzahlung ergeben"
                     ),
                     documents=[doc],
@@ -488,7 +488,7 @@ def _flag_split_case_a(transactions: list[dict], doc_pool: list[dict], tolerance
                     amount_delta=amount_delta,
                 ).to_dict()
             ]
-            this_tx["note"] = "Moegliche Teilzahlung - ein Beleg deckt evtl. diese UND eine weitere Buchung ab"
+            this_tx["note"] = "Mögliche Teilzahlung - ein Beleg deckt evtl. diese UND eine weitere Buchung ab"
             flagged += 1
     return flagged, used_doc_ids_here
 
@@ -539,7 +539,7 @@ def _flag_split_case_b(
                 reason_type=MatchReasonType.SPLIT_PAYMENT_TX_SUM,
                 confidence=round(confidence, 3),
                 reason_detail=(
-                    f"{len(combo)} Belege zusammen ({sum(d['amount'] for d in combo):.2f} EUR) koennten diese "
+                    f"{len(combo)} Belege zusammen ({sum(d['amount'] for d in combo):.2f} EUR) könnten diese "
                     f"Buchung ({tx['amount_abs']:.2f} EUR) als Teilzahlung ergeben"
                 ),
                 documents=list(combo),
@@ -547,7 +547,7 @@ def _flag_split_case_b(
             ).to_dict()
             for confidence, combo, amount_delta in top
         ]
-        tx["note"] = "Moegliche Teilzahlung - mehrere Belege zusammen koennten diese Buchung ergeben"
+        tx["note"] = "Mögliche Teilzahlung - mehrere Belege zusammen könnten diese Buchung ergeben"
         # Nur die Dokumente des BESTEN Vorschlags sperren wir fuer andere
         # Buchungen - die uebrigen Top-N-Vorschlaege sind ohnehin nur
         # Alternativen fuer DIESELBE Buchung, keine Konkurrenz um eine

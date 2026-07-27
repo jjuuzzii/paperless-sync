@@ -74,6 +74,20 @@ except ImportError:
 _IBAN_RE = re.compile(r"IBAN:?\s*[A-Z]{2}\d{2}[A-Z0-9]{10,30}", re.IGNORECASE)
 _BIC_RE = re.compile(r"BIC:?\s*[A-Z0-9]{8,11}", re.IGNORECASE)
 
+# Einheitliches Badge-System fuer alle offenen Status-Werte, die eine
+# eigene Kennzeichnung brauchen (siehe tx_status.TxStatus/CLAUDE.md) -
+# EINE zentrale Zuordnung Status -> (Anzeigename, Farbschluessel in COLORS)
+# statt einer Sonderloesung pro Fall. UNRESOLVED bekommt bewusst kein
+# Badge: die rote Rahmenfarbe der Karte ist dort das Signal (wie bisher),
+# ein zusaetzliches "OFFEN"-Badge auf jeder roten Karte waere nur Rauschen.
+# Erledigte Status (MATCHED/TAGGED) haben ihre bestehenden Pills in
+# _render_success_card und tauchen hier nicht auf.
+STATUS_BADGES = {
+    TxStatus.MULTI_MATCH: ("MEHRFACH-MATCH", "amber"),
+    TxStatus.DUPLICATE_SUSPECT: ("DUPLIKAT-VERDACHT", "purple"),
+    TxStatus.SPLIT_PAYMENT: ("TEILZAHLUNG?", "teal"),
+}
+
 
 def _display_purpose(purpose: str, noise_terms: list[str] | None = None) -> str:
     text = _IBAN_RE.sub("", purpose)
@@ -547,6 +561,7 @@ class DesktopAppQt(QMainWindow):
         self.kpi_success = self._build_kpi_card(kpi_row, f"✅  {tr('ZUGEORDNETE BELEGE')}", COLORS["green"])
         self.kpi_action = self._build_kpi_card(kpi_row, f"⚠️  {tr('AKTION ERFORDERLICH')}", COLORS["red"])
         self.kpi_multi = self._build_kpi_card(kpi_row, tr("MEHRFACH-MATCH"), COLORS["amber"], dot_color=COLORS["amber"])
+        self.kpi_review = self._build_kpi_card(kpi_row, tr("ZU PRÜFEN"), COLORS["purple"], dot_color=COLORS["purple"])
         main_layout.addLayout(kpi_row)
         main_layout.addSpacing(14)
 
@@ -619,6 +634,7 @@ class DesktopAppQt(QMainWindow):
         self.kpi_success.setText(str(len(self.app_state.success_transactions)))
         self.kpi_action.setText(str(len(self.app_state.missing_transactions)))
         self.kpi_multi.setText(str(len(self.app_state.unclear_transactions)))
+        self.kpi_review.setText(str(len(self.app_state.review_transactions)))
 
     def _render_status(self):
         if not self.app_state.client:
@@ -678,22 +694,27 @@ class DesktopAppQt(QMainWindow):
         elif not success_txs:
             self.success_layout.addWidget(self._placeholder_label(tr("Noch keine zugeordneten Belege.")))
 
-        for tx in self.app_state.unclear_transactions:
-            w = self._render_action_card(tx, is_unclear=True)
+        # unclear_transactions (MULTI_MATCH) + review_transactions
+        # (DUPLICATE_SUSPECT/SPLIT_PAYMENT) sind erfahrungsgemaess deutlich
+        # weniger als missing_transactions - unpaginiert, wie bisher schon
+        # bei unclear_transactions.
+        priority_txs = self.app_state.unclear_transactions + self.app_state.review_transactions
+        for tx in priority_txs:
+            w = self._render_action_card(tx)
             self.action_layout.addWidget(w)
             self._card_widgets[tx["id"]] = w
 
         missing_txs = self.app_state.missing_transactions
         visible_missing = missing_txs[: self._action_reveal]
         for tx in visible_missing:
-            w = self._render_action_card(tx, is_unclear=False)
+            w = self._render_action_card(tx)
             self.action_layout.addWidget(w)
             self._card_widgets[tx["id"]] = w
         if len(missing_txs) > len(visible_missing):
             self.action_layout.addWidget(
                 self._build_load_more_button(len(missing_txs) - len(visible_missing), "action")
             )
-        elif not missing_txs and not self.app_state.unclear_transactions:
+        elif not missing_txs and not priority_txs:
             self.action_layout.addWidget(self._placeholder_label(tr("Alles zugeordnet! 🎉")))
 
     def _placeholder_label(self, text: str) -> QLabel:
@@ -725,11 +746,11 @@ class DesktopAppQt(QMainWindow):
             if tx["status"] in DONE_STATUSES:
                 w = self._render_success_card(tx)
                 self.success_layout.insertWidget(max(0, self.success_layout.count() - 1), w)
-            elif tx["status"] == TxStatus.MULTI_MATCH:
-                w = self._render_action_card(tx, is_unclear=True)
+            elif tx["status"] in (TxStatus.MULTI_MATCH, TxStatus.DUPLICATE_SUSPECT, TxStatus.SPLIT_PAYMENT):
+                w = self._render_action_card(tx)
                 self.action_layout.insertWidget(0, w)
             else:
-                w = self._render_action_card(tx, is_unclear=False)
+                w = self._render_action_card(tx)
                 self.action_layout.insertWidget(max(0, self.action_layout.count() - 1), w)
             self._card_widgets[tx_id] = w
         self._update_kpis()
@@ -885,17 +906,21 @@ class DesktopAppQt(QMainWindow):
         row.addStretch()
         outer.addLayout(row)
 
-    def _render_action_card(self, tx: dict, is_unclear: bool) -> QFrame:
-        border_color = COLORS["amber"] if is_unclear else COLORS["red_border"]
+    def _render_action_card(self, tx: dict) -> QFrame:
+        status = tx["status"]
+        is_unclear = status == TxStatus.MULTI_MATCH
+        badge_info = STATUS_BADGES.get(status)
+        border_color = COLORS[badge_info[1]] if badge_info else COLORS["red_border"]
         card = CardFrame(COLORS["bg_card"], border_color, border_width=2)
         outer = QVBoxLayout(card)
         outer.setContentsMargins(16, 12, 16, 12)
         outer.setSpacing(6)
 
-        if is_unclear:
-            badge = QLabel(tr("MEHRFACH-MATCH"))
+        if badge_info:
+            label, color_key = badge_info
+            badge = QLabel(tr(label))
             badge.setStyleSheet(
-                f"background-color: {COLORS['amber']}; color: #1e1e2e; border-radius: 8px; "
+                f"background-color: {COLORS[color_key]}; color: #1e1e2e; border-radius: 8px; "
                 f"padding: 4px 10px; font-weight: bold; font-size: 9pt;"
             )
             badge.setFixedWidth(badge.sizeHint().width())
@@ -917,18 +942,35 @@ class DesktopAppQt(QMainWindow):
         top.addWidget(amount_lbl, alignment=Qt.AlignTop)
         outer.addLayout(top)
 
-        if is_unclear:
+        if badge_info and tx.get("note"):
+            # Info-Banner in derselben Farbe wie das Badge - Text kommt aus
+            # tx['note'] (siehe matcher.py: dort schon deutschsprachig und
+            # je nach genauer Ursache formuliert, z.B. exakter Mehrfach-
+            # treffer vs. Toleranz-Kandidaten vs. Duplikat vs. Teilzahlung -
+            # kein hartkodierter Text mehr pro Status noetig.
+            _, color_key = badge_info
             warn = QFrame()
-            warn.setStyleSheet(f"background-color: {COLORS['amber_dim']}; border-radius: 10px; border: none;")
+            warn.setStyleSheet(f"background-color: {COLORS[color_key + '_dim']}; border-radius: 10px; border: none;")
             warn_layout = QHBoxLayout(warn)
-            warn_lbl = QLabel(f"⚠️  {tr('Betrag tritt mehrfach auf - bitte manuell zuordnen.')}")
-            warn_lbl.setStyleSheet(f"color: {COLORS['amber']}; font-weight: bold; border: none;")
+            warn_lbl = QLabel(f"⚠️  {tx['note']}")
+            warn_lbl.setStyleSheet(f"color: {COLORS[color_key]}; font-weight: bold; border: none;")
             _make_wrap_safe(warn_lbl)
             warn_layout.addWidget(warn_lbl)
             outer.addWidget(warn)
+
+        if is_unclear:
             self._build_ambiguous_picker(outer, tx)
             self._build_tag_row(outer, tx)
             return card
+
+        # DUPLICATE_SUSPECT/SPLIT_PAYMENT haben (noch) keine eigene
+        # Kandidaten-Aktion (0 bzw. 2+ Dokumente, siehe
+        # _build_ambiguous_picker-Kommentar) - fallen bewusst durch zu den
+        # normalen Aktionen unten (Beleg hochladen/waehlen/taggen). Jede
+        # dieser Aktionen ueberschreibt tx['status'] unabhaengig vom
+        # aktuellen Wert (siehe Controller.on_apply_tag/on_pdf_drop/
+        # on_documents_selected) - loest den Verdachtsfall also automatisch
+        # mit auf.
 
         if tx.get("suggested_tag"):
             sugg = tx["suggested_tag"]
@@ -943,7 +985,7 @@ class DesktopAppQt(QMainWindow):
             sugg_lbl.setStyleSheet(f"color: {COLORS['blue']}; font-weight: bold; border: none;")
             _make_wrap_safe(sugg_lbl)
             sugg_layout.addWidget(sugg_lbl, stretch=1)
-            apply_btn = QPushButton(f"✓ {tr('Uebernehmen')}")
+            apply_btn = QPushButton(f"✓ {tr('Übernehmen')}")
             apply_btn.setStyleSheet(
                 f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
                 f"padding: 6px 14px; }} QPushButton:hover {{ background-color: #4a76d6; }}"

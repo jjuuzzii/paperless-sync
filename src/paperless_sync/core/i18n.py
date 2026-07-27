@@ -55,6 +55,9 @@ _EN: dict[str, str] = {
     "ZUGEORDNETE BELEGE": "MATCHED RECEIPTS",
     "AKTION ERFORDERLICH": "ACTION REQUIRED",
     "MEHRFACH-MATCH": "MULTIPLE MATCHES",
+    "ZU PRÜFEN": "TO REVIEW",
+    "DUPLIKAT-VERDACHT": "SUSPECTED DUPLICATE",
+    "TEILZAHLUNG?": "SPLIT PAYMENT?",
     "Erfolgreich": "Successful",
     "Unklar / Fehlt": "Unclear / Missing",
 
@@ -69,7 +72,7 @@ _EN: dict[str, str] = {
     "Beleg": "Receipt",
     "Betrag tritt mehrfach auf - bitte manuell zuordnen.": "Amount occurs more than once - please assign manually.",
     "Vorschlag: {icon} {label} - ähnliche Buchung, bereits so getaggt": "Suggestion: {icon} {label} - similar transaction, already tagged this way",
-    "Uebernehmen": "Apply",
+    "Übernehmen": "Apply",
     "Aus Paperless wählen": "Choose from Paperless",
     "PDF ablegen": "Drop PDF here",
     "Keine Kandidaten geladen": "No candidates loaded",
