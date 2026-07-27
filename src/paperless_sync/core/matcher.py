@@ -6,7 +6,81 @@ import re
 from dateutil import parser as dateparser
 
 from .csv_utils import parse_amount, parse_date
+from .match_candidate import MatchCandidate, MatchReasonType
 from .tx_status import TxStatus
+
+# Buchungen mit diesem Status sind eine bewusste Nutzerentscheidung und
+# werden von keiner automatischen Erkennung (Duplikat, Toleranz-Match,
+# Teilzahlung) mehr angefasst.
+_LOCKED_STATUSES = (TxStatus.TAGGED, TxStatus.MATCHED)
+
+
+def normalize_purpose(purpose: str) -> str:
+    """Entfernt Ziffern (Datum, Uhrzeit, Betrag, Referenznummern sind pro
+    Buchung fast immer einzigartig eingebettet) und normalisiert
+    Whitespace, damit wiederkehrende/doppelt importierte Buchungen trotz
+    unterschiedlicher CSV-Quelle (leicht abweichender Referenztext) erkannt
+    werden. Frueher in desktop_controller.py, jetzt hier, weil auch
+    flag_duplicate_suspects() sie braucht und core/ nicht von state/
+    importieren darf."""
+    without_digits = re.sub(r"\d+", "", purpose)
+    return re.sub(r"\s+", " ", without_digits).strip().upper()
+
+
+def flag_duplicate_suspects(transactions: list[dict]) -> int:
+    """Gruppiert Transaktionen nach (date, amount_raw, normalisierter
+    Verwendungszweck) - amount_raw VORZEICHENBEHAFTET (nicht amount_abs):
+    +50 und -50 sind kein Duplikat-Verdacht, sondern zwei unterschiedliche
+    Buchungen. normalize_purpose() statt striktem Wortlaut-Vergleich, weil
+    dieselbe real doppelt importierte Buchung ueber zwei CSV-Quellen (oder
+    CSV+Bank-API) oft einen leicht abweichenden, teils rein numerischen
+    Verwendungszweck traegt (siehe Controller._merge_new_transactions -
+    dort ist der Verwendungszweck aus demselben Grund bewusst NICHT Teil
+    des Dedup-Schluessels).
+
+    MUSS vor match_transactions() aufgerufen werden (siehe
+    desktop_controller.on_match_click), damit derselbe Beleg nicht
+    faelschlich beiden Buchungen eines Duplikat-Paars zugeordnet wird -
+    match_transactions() ueberspringt DUPLICATE_SUSPECT-Buchungen.
+
+    Ruehrt TAGGED/MATCHED-Buchungen nie an (Nutzerentscheidung bleibt
+    unangetastet), referenziert eine solche aber trotzdem als
+    related_transaction_id bei ihrem noch offenen Duplikat-Partner.
+
+    Wird bei jedem Aufruf komplett neu berechnet statt bereits gepruefte
+    Paare zu ueberspringen - unproblematisch, weil Transaktionen in dieser
+    App nie geloescht werden (keine on_delete_transaction-Aktion): eine
+    einmal erkannte Duplikat-Gruppe kann nur noch wachsen, nie schrumpfen,
+    ein Re-Run liefert fuer unveraenderte Gruppen dasselbe Ergebnis.
+
+    Gibt die Anzahl neu markierter Transaktionen zurueck."""
+    groups: dict[tuple, list[dict]] = {}
+    for tx in transactions:
+        key = (tx["date"], tx["amount_raw"], normalize_purpose(tx["purpose"]))
+        groups.setdefault(key, []).append(tx)
+
+    newly_flagged = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        for tx in group:
+            if tx["status"] in _LOCKED_STATUSES:
+                continue
+            if tx["status"] != TxStatus.DUPLICATE_SUSPECT:
+                newly_flagged += 1
+            others = [t for t in group if t is not tx]
+            tx["status"] = TxStatus.DUPLICATE_SUSPECT
+            tx["candidate_docs"] = [
+                MatchCandidate(
+                    reason_type=MatchReasonType.DUPLICATE_SUSPECT,
+                    confidence=1.0,
+                    reason_detail=f"Gleicher Betrag/Datum/Verwendungszweck wie Buchung #{other.get('display_number') or other['id']}",
+                    related_transaction_id=other["id"],
+                ).to_dict()
+                for other in others
+            ]
+            tx["note"] = "Moeglicher Duplikat-Fall - pruefen, ob dieselbe Buchung versehentlich zweimal importiert wurde"
+    return newly_flagged
 
 
 def build_transactions(df, mapping: dict) -> list[dict]:

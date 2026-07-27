@@ -6,7 +6,6 @@ und persistiert bei Bedarf die Sitzung. Die UI ruft danach einfach ihre
 render()-Methode erneut auf - der Controller kennt kein Tkinter-Widget."""
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +15,8 @@ from paperless_sync.core.matcher import (
     renumber_transactions,
     fetch_and_prepare_paperless_docs,
     match_transactions,
+    flag_duplicate_suspects,
+    normalize_purpose,
 )
 from paperless_sync.core.exporter import generate_export
 from paperless_sync.core.config_manager import csv_signature as compute_csv_signature
@@ -55,15 +56,6 @@ class _BytesUpload:
 
     def getvalue(self) -> bytes:
         return self._data
-
-
-def normalize_purpose(purpose: str) -> str:
-    """Siehe app.py/normalize_purpose: entfernt Ziffern (Datum, Uhrzeit,
-    Betrag, Referenznummern sind pro Buchung fast immer einzigartig
-    eingebettet) und normalisiert Whitespace, damit wiederkehrende Buchungen
-    trotz unterschiedlichem Datum/Betrag erkannt werden."""
-    without_digits = re.sub(r"\d+", "", purpose)
-    return re.sub(r"\s+", " ", without_digits).strip().upper()
 
 
 class Controller:
@@ -218,6 +210,13 @@ class Controller:
             raise RuntimeError("Paperless ist nicht konfiguriert (.env pruefen).")
         if not state.transactions:
             raise RuntimeError("Bitte zuerst eine CSV laden.")
+
+        # MUSS vor match_transactions() laufen (siehe flag_duplicate_suspects-
+        # Docstring): sonst koennte derselbe Beleg faelschlich beiden
+        # Buchungen eines Duplikat-Paars zugeordnet werden.
+        if state.config.get("duplicate_detection", {}).get("enabled", True):
+            flag_duplicate_suspects(state.transactions)
+
         docs = fetch_and_prepare_paperless_docs(state.client, state.config["amount_detection"])
         match_transactions(state.transactions, docs)
         state.matched_once = True
