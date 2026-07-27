@@ -33,11 +33,17 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 - **German / English UI** — switchable in Settings (restart required).
 - **Paperless success tag** — optionally tags matched documents back in Paperless itself, so the match status is visible/filterable there too.
 
-## Screenshot
+## Screenshots
 
-![Paperless Sync screenshot](docs/screenshot.png)
+![Paperless Sync - transactions needing review, with match/duplicate/split-payment badges](docs/screenshot.png)
 
-*(shown with the bundled example CSV and placeholder data — no real transactions)*
+*Transactions needing review — multi-match, duplicate-suspect, and split-payment cases each get their own badge and suggested candidates.*
+
+![Paperless Sync - matched and tagged transactions](docs/screenshot_success.png)
+
+*Matched and tagged transactions — automatically matched, manually uploaded, or tagged as not needing a receipt.*
+
+*(both shown with placeholder demo data — no real transactions)*
 
 ## Installation
 
