@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import itertools
 import re
-from difflib import SequenceMatcher
 
 from dateutil import parser as dateparser
 
@@ -247,10 +246,6 @@ def fetch_and_prepare_paperless_docs(client, amount_detection: dict) -> list[dic
     return prepared
 
 
-_DATE_SCORE_WINDOW_DAYS = 30  # danach traegt die Datumsnaehe nichts mehr zur Konfidenz bei
-_TOLERANT_SCORE_WEIGHTS = {"amount": 0.6, "date": 0.25, "text": 0.15}
-
-
 def _amount_closeness_score(candidate_amount: float, target_amount: float, tolerance_abs: float, tolerance_pct: float) -> float:
     """1.0 = exakt gleich, 0.0 = genau an der (guenstigeren der beiden
     ODER-verknuepften) Toleranzgrenze. Ein Kandidat landet ueberhaupt nur
@@ -265,39 +260,17 @@ def _amount_closeness_score(candidate_amount: float, target_amount: float, toler
     return max(0.0, 1.0 - min(abs_ratio, pct_ratio, 1.0))
 
 
-def _date_proximity_score(doc_date, tx_date) -> float:
-    """0.5 (neutral) wenn eines der beiden Daten fehlt - fehlende Info soll
-    nicht bestrafen (Paperless-'created' ist z.B. nicht bei jedem Dokument
-    aussagekraeftig). Sonst linear abfallend innerhalb von
-    _DATE_SCORE_WINDOW_DAYS."""
-    if doc_date is None or tx_date is None:
-        return 0.5
-    days = abs((doc_date - tx_date).days)
-    if days >= _DATE_SCORE_WINDOW_DAYS:
-        return 0.0
-    return 1.0 - (days / _DATE_SCORE_WINDOW_DAYS)
-
-
-def _text_similarity_score(a: str, b: str) -> float:
-    """0.5 (neutral) wenn einer der beiden Texte leer ist. Sonst
-    difflib.SequenceMatcher (Standardbibliothek, keine neue Abhaengigkeit)
-    zwischen Korrespondent-Name und Verwendungszweck/Zahlungsbeteiligtem -
-    niedrig gewichtet, weil beides oft nichts inhaltlich Vergleichbares
-    gemein hat."""
-    if not a or not b:
-        return 0.5
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-
 def find_tolerant_candidates(
     tx: dict, candidates_pool: list[dict], used_doc_ids: set, tolerance_abs: float, tolerance_pct: float, top_n: int
 ) -> list[dict]:
     """Nur aufgerufen, wenn der exakte Betragsabgleich 0 Treffer fand. Ein
     Dokument wird Kandidat, sobald es INNERHALB der absoluten ODER der
     prozentualen Toleranz liegt (siehe match_transactions-Docstring fuer die
-    Begruendung der ODER-Verknuepfung). Konfidenz aus Betrag/Datum/Text
-    gewichtet (siehe _TOLERANT_SCORE_WEIGHTS), absteigend sortiert, auf
-    top_n gekappt. Gibt fertige MatchCandidate.to_dict()-Eintraege zurueck."""
+    Begruendung der ODER-Verknuepfung). Konfidenz ausschliesslich aus der
+    Betragsnaehe (_amount_closeness_score) - bewusst KEINE Datums-/
+    Textgewichtung, das war zu fehleranfaellig/unvorhersehbar. Absteigend
+    sortiert, auf top_n gekappt. Gibt fertige MatchCandidate.to_dict()-
+    Eintraege zurueck."""
     scored = []
     for doc in candidates_pool:
         if doc["id"] in used_doc_ids:
@@ -308,11 +281,7 @@ def find_tolerant_candidates(
         within_pct = pct_budget > 0 and diff <= pct_budget
         if not (within_abs or within_pct):
             continue
-        amount_score = _amount_closeness_score(doc["amount"], tx["amount_abs"], tolerance_abs, tolerance_pct)
-        date_score = _date_proximity_score(doc.get("date"), tx["date"])
-        text_score = _text_similarity_score(doc.get("correspondent_name") or "", tx.get("counterparty") or tx.get("purpose") or "")
-        weights = _TOLERANT_SCORE_WEIGHTS
-        confidence = weights["amount"] * amount_score + weights["date"] * date_score + weights["text"] * text_score
+        confidence = _amount_closeness_score(doc["amount"], tx["amount_abs"], tolerance_abs, tolerance_pct)
         amount_delta = round(doc["amount"] - tx["amount_abs"], 2)
         scored.append((confidence, doc, amount_delta))
 
