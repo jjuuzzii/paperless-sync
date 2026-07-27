@@ -170,7 +170,7 @@ class SettingsDialog(QDialog):
         self.cert_label = QLabel(self._cert_path_display)
         self.cert_label.setStyleSheet("border: none;")
         cert_row.addWidget(self.cert_label, stretch=1)
-        cert_btn = QPushButton(tr("Datei waehlen"))
+        cert_btn = QPushButton(tr("Datei wählen"))
         cert_btn.setStyleSheet(self._button_style())
         cert_btn.clicked.connect(self._pick_cert)
         cert_row.addWidget(cert_btn)
@@ -196,7 +196,7 @@ class SettingsDialog(QDialog):
         export_reset_btn.setStyleSheet(self._outline_button_style())
         export_reset_btn.clicked.connect(self._reset_export_dir)
         export_row.addWidget(export_reset_btn)
-        export_pick_btn = QPushButton(tr("Ordner waehlen"))
+        export_pick_btn = QPushButton(tr("Ordner wählen"))
         export_pick_btn.setStyleSheet(self._button_style())
         export_pick_btn.clicked.connect(self._pick_export_dir)
         export_row.addWidget(export_pick_btn)
@@ -242,26 +242,26 @@ class SettingsDialog(QDialog):
             csv_card = self._section(
                 tr("CSV-Spalten-Zuordnung"),
                 tr(
-                    "Gilt fuer das aktuell geladene CSV-Format. Absender/Empfaenger wirkt sofort auf bereits "
-                    "geladene Buchungen, Datum/Betrag/Verwendungszweck erst beim naechsten Import dieser Datei."
+                    "Gilt für das aktuell geladene CSV-Format. Absender/Empfänger wirkt sofort auf bereits "
+                    "geladene Buchungen, Datum/Betrag/Verwendungszweck erst beim nächsten Import dieser Datei."
                 ),
             )
             col_sig = compute_csv_signature(self._csv_columns)
             current_mapping = state.config.get("csv_mappings", {}).get(col_sig) or state.pending_mapping or {}
 
-            self.map_date_combo = self._labeled_combo(csv_card, tr("Spalte fuer Datum"), self._csv_columns, current_mapping.get("date_column"))
-            self.map_amount_combo = self._labeled_combo(csv_card, tr("Spalte fuer Betrag"), self._csv_columns, current_mapping.get("amount_column"))
-            self.map_purpose_combo = self._labeled_combo(csv_card, tr("Spalte fuer Verwendungszweck"), self._csv_columns, current_mapping.get("purpose_column"))
+            self.map_date_combo = self._labeled_combo(csv_card, tr("Spalte für Datum"), self._csv_columns, current_mapping.get("date_column"))
+            self.map_amount_combo = self._labeled_combo(csv_card, tr("Spalte für Betrag"), self._csv_columns, current_mapping.get("amount_column"))
+            self.map_purpose_combo = self._labeled_combo(csv_card, tr("Spalte für Verwendungszweck"), self._csv_columns, current_mapping.get("purpose_column"))
             counterparty_values = [_none_option()] + self._csv_columns
             current_counterparty = current_mapping.get("counterparty_column")
             self.map_counterparty_combo = self._labeled_combo(
-                csv_card, tr("Spalte fuer Absender/Empfaenger (optional)"), counterparty_values,
+                csv_card, tr("Spalte für Absender/Empfänger (optional)"), counterparty_values,
                 current_counterparty if current_counterparty in self._csv_columns else _none_option(),
             )
 
         noise_card = self._section(
             tr("Verwendungszweck: Rauschbegriffe ausblenden"),
-            tr("Nur in der Kartenanzeige entfernt (Export/Zuordnung unveraendert). IBAN/BIC werden immer automatisch entfernt."),
+            tr("Nur in der Kartenanzeige entfernt (Export/Zuordnung unverändert). IBAN/BIC werden immer automatisch entfernt."),
         )
         self._noise_terms = list(state.config.get("purpose_noise_terms", []))
         self.noise_list_layout = QVBoxLayout()
@@ -282,7 +282,7 @@ class SettingsDialog(QDialog):
 
         tags_card = self._section(
             tr("Eigene Tags verwalten"),
-            tr("Loescht nur die Tag-Definition aus der Schnellauswahl/Sonstiges-Liste. Bereits getaggte Buchungen behalten ihren Tag."),
+            tr("Löscht nur die Tag-Definition aus der Schnellauswahl/Sonstiges-Liste. Bereits getaggte Buchungen behalten ihren Tag."),
         )
         self._custom_tags = dict(state.config.get("custom_tags", {}))
         self.tags_list_layout = QVBoxLayout()
@@ -293,8 +293,8 @@ class SettingsDialog(QDialog):
             tr("Paperless-Erfolgs-Tag"),
             tr(
                 "Setzt in Paperless selbst einen Tag auf Dokumente, die erfolgreich einer Buchung zugeordnet "
-                "wurden (automatischer Match, manuelle Verknuepfung, aufgeloester Mehrfach-Match). Gilt nicht "
-                "fuer frisch hochgeladene PDFs (Paperless verarbeitet die erst asynchron)."
+                "wurden (automatischer Match, manuelle Verknüpfung, aufgelöster Mehrfach-Match). Gilt nicht "
+                "für frisch hochgeladene PDFs (Paperless verarbeitet die erst asynchron)."
             ),
         )
         self.paperless_tag_checkbox = QCheckBox(tr("Aktiviert"))
@@ -307,7 +307,7 @@ class SettingsDialog(QDialog):
 
         logo_card = self._section(
             tr("Firmenlogo"),
-            tr("Eigenes Logo statt der Buerklammer oben links in der Seitenleiste. Nur PNG, quadratisch empfohlen."),
+            tr("Eigenes Logo statt der Büroklammer oben links in der Seitenleiste. Nur PNG, quadratisch empfohlen."),
         )
         self._selected_logo_file = None
         self._logo_removed = False
@@ -316,11 +316,11 @@ class SettingsDialog(QDialog):
         self.logo_label = QLabel(self._logo_path_display)
         self.logo_label.setStyleSheet("border: none;")
         logo_row.addWidget(self.logo_label, stretch=1)
-        logo_reset_btn = QPushButton(tr("Zuruecksetzen"))
+        logo_reset_btn = QPushButton(tr("Zurücksetzen"))
         logo_reset_btn.setStyleSheet(self._outline_button_style())
         logo_reset_btn.clicked.connect(self._reset_logo)
         logo_row.addWidget(logo_reset_btn)
-        logo_pick_btn = QPushButton(tr("Logo waehlen"))
+        logo_pick_btn = QPushButton(tr("Logo wählen"))
         logo_pick_btn.setStyleSheet(self._button_style())
         logo_pick_btn.clicked.connect(self._pick_logo)
         logo_row.addWidget(logo_pick_btn)
@@ -328,7 +328,7 @@ class SettingsDialog(QDialog):
 
         lang_card = self._section(
             tr("Sprache"),
-            tr("Sprache der Oberflaeche. Wirkt erst nach einem Neustart der App."),
+            tr("Sprache der Oberfläche. Wirkt erst nach einem Neustart der App."),
         )
         lang_row = QHBoxLayout()
         self.lang_combo = NoScrollComboBox()
@@ -494,7 +494,7 @@ class SettingsDialog(QDialog):
         self._render_custom_tags()
 
     def _pick_export_dir(self):
-        path = QFileDialog.getExistingDirectory(self, tr("Exportordner waehlen"))
+        path = QFileDialog.getExistingDirectory(self, tr("Exportordner wählen"))
         if path:
             self._selected_export_dir = path
             self.export_dir_label.setText(path)
@@ -504,13 +504,13 @@ class SettingsDialog(QDialog):
         self.export_dir_label.setText(tr("Standard"))
 
     def _pick_cert(self):
-        path, _ = QFileDialog.getOpenFileName(self, tr("Client-Zertifikat waehlen"), "", "PKCS#12 (*.p12 *.pfx);;Alle Dateien (*)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Client-Zertifikat wählen"), "", "PKCS#12 (*.p12 *.pfx);;Alle Dateien (*)")
         if path:
             self._selected_cert_file = path
             self.cert_label.setText(Path(path).name)
 
     def _pick_logo(self):
-        path, _ = QFileDialog.getOpenFileName(self, tr("Logo waehlen"), "", "PNG (*.png)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Logo wählen"), "", "PNG (*.png)")
         if path:
             self._selected_logo_file = path
             self._logo_removed = False
@@ -575,7 +575,7 @@ class SettingsDialog(QDialog):
     def _create_backup(self):
         password = self._prompt_backup_password(
             tr("Backup-Passwort"),
-            tr("Passwort fuer dieses Backup (leer lassen fuer kein Passwort):"),
+            tr("Passwort für dieses Backup (leer lassen für kein Passwort):"),
         )
         if password is None:
             return
@@ -584,7 +584,7 @@ class SettingsDialog(QDialog):
                 self,
                 tr("Kein Passwort gesetzt"),
                 tr(
-                    "Ohne Passwort ist das Backup NICHT verschluesselt - jeder mit Zugriff auf die Datei kann "
+                    "Ohne Passwort ist das Backup NICHT verschlüsselt - jeder mit Zugriff auf die Datei kann "
                     "deine Paperless-Zugangsdaten (Token, ggf. Zertifikat-Passwort) direkt auslesen. "
                     "Wirklich ohne Passwort fortfahren?"
                 ),
@@ -603,7 +603,7 @@ class SettingsDialog(QDialog):
             Path(path).write_bytes(create_backup(self.state_ref.base_dir, password=password or None))
         except SecretsLockedError:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
-            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig) - Backup nicht moeglich."))
+            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase nötig) - Backup nicht möglich."))
             return
         except Exception as exc:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
@@ -613,14 +613,14 @@ class SettingsDialog(QDialog):
         self.status_label.setText(tr("Backup gespeichert: {path}", path=path))
 
     def _restore_backup(self):
-        path, _ = QFileDialog.getOpenFileName(self, tr("Backup-ZIP waehlen"), "", "ZIP-Archiv (*.zip)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Backup-ZIP wählen"), "", "ZIP-Archiv (*.zip)")
         if not path:
             return
         confirm = QMessageBox.question(
             self,
             tr("Backup wiederherstellen"),
             tr(
-                "Ueberschreibt Einstellungen, Zugangsdaten und den aktuellen Arbeitsstand unwiderruflich.\n\n"
+                "Überschreibt Einstellungen, Zugangsdaten und den aktuellen Arbeitsstand unwiderruflich.\n\n"
                 "Die App wird danach beendet und muss manuell neu gestartet werden, damit der wiederhergestellte "
                 "Stand geladen wird. Fortfahren?"
             ),
@@ -629,7 +629,7 @@ class SettingsDialog(QDialog):
         if confirm != QMessageBox.Yes:
             return
         password = self._prompt_backup_password(
-            tr("Backup entschluesseln"),
+            tr("Backup entschlüsseln"),
             tr("Passwort dieses Backups (leer lassen, falls keins gesetzt wurde):"),
         )
         if password is None:
@@ -638,11 +638,11 @@ class SettingsDialog(QDialog):
             restored = restore_backup(self.state_ref.base_dir, Path(path).read_bytes(), password=password or None)
         except WrongBackupPasswordError:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
-            self.status_label.setText(tr("Falsches Passwort (oder das Backup ist verschluesselt)."))
+            self.status_label.setText(tr("Falsches Passwort (oder das Backup ist verschlüsselt)."))
             return
         except SecretsLockedError:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
-            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig) - Wiederherstellung nicht moeglich."))
+            self.status_label.setText(tr("Zugangsdaten sind gerade gesperrt (Passphrase nötig) - Wiederherstellung nicht möglich."))
             return
         except Exception as exc:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
@@ -651,7 +651,7 @@ class SettingsDialog(QDialog):
         if not restored:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
             self.status_label.setText(
-                tr("Das ZIP enthaelt keine bekannten Backup-Dateien (config.json / .env / session_state.json).")
+                tr("Das ZIP enthält keine bekannten Backup-Dateien (config.json / .env / session_state.json).")
             )
             return
         # WICHTIG: DesktopAppQt.closeEvent() ruft beim Beenden unbedingt
@@ -681,7 +681,7 @@ class SettingsDialog(QDialog):
             self.status_label.setText(tr("Verbindung erfolgreich."))
         else:
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
-            self.status_label.setText(tr("Verbindung fehlgeschlagen - URL/Token pruefen."))
+            self.status_label.setText(tr("Verbindung fehlgeschlagen - URL/Token prüfen."))
 
     def _save(self):
         state = self.state_ref
@@ -731,7 +731,7 @@ class SettingsDialog(QDialog):
             # defensiv geprueft, falls doch ein anderer Dateiname eingetippt wurde.
             if Path(self._selected_logo_file).suffix.lower() != ".png":
                 self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
-                self.status_label.setText(tr("Nur PNG-Dateien werden als Firmenlogo unterstuetzt."))
+                self.status_label.setText(tr("Nur PNG-Dateien werden als Firmenlogo unterstützt."))
                 return
             logo_dest = state.base_dir / "company_icon.png"
             logo_dest.write_bytes(Path(self._selected_logo_file).read_bytes())
@@ -775,28 +775,28 @@ class MappingDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(4)
 
-        layout.addWidget(QLabel(tr("Spalte fuer Datum")))
+        layout.addWidget(QLabel(tr("Spalte für Datum")))
         self.date_combo = NoScrollComboBox()
         self.date_combo.setStyleSheet(_combo_style())
         self.date_combo.addItems(columns)
         layout.addWidget(self.date_combo)
         layout.addSpacing(8)
 
-        layout.addWidget(QLabel(tr("Spalte fuer Betrag")))
+        layout.addWidget(QLabel(tr("Spalte für Betrag")))
         self.amount_combo = NoScrollComboBox()
         self.amount_combo.setStyleSheet(_combo_style())
         self.amount_combo.addItems(columns)
         layout.addWidget(self.amount_combo)
         layout.addSpacing(8)
 
-        layout.addWidget(QLabel(tr("Spalte fuer Verwendungszweck")))
+        layout.addWidget(QLabel(tr("Spalte für Verwendungszweck")))
         self.purpose_combo = NoScrollComboBox()
         self.purpose_combo.setStyleSheet(_combo_style())
         self.purpose_combo.addItems(columns)
         layout.addWidget(self.purpose_combo)
         layout.addSpacing(8)
 
-        layout.addWidget(QLabel(tr("Spalte fuer Absender/Empfaenger (optional)")))
+        layout.addWidget(QLabel(tr("Spalte für Absender/Empfänger (optional)")))
         self.counterparty_combo = NoScrollComboBox()
         self.counterparty_combo.setStyleSheet(_combo_style())
         counterparty_values = [_none_option()] + columns
@@ -806,7 +806,7 @@ class MappingDialog(QDialog):
         layout.addWidget(self.counterparty_combo)
         layout.addSpacing(16)
 
-        confirm_btn = QPushButton(tr("Bestaetigen"))
+        confirm_btn = QPushButton(tr("Bestätigen"))
         confirm_btn.setStyleSheet(
             f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
             f"padding: 10px; font-weight: bold; }} QPushButton:hover {{ background-color: #4a76d6; }}"
@@ -831,7 +831,7 @@ class MappingDialog(QDialog):
 
 
 class DocumentSearchDialog(QDialog):
-    """Such-Modal fuer 'Aus Paperless waehlen' - live gefilterte Liste aller
+    """Such-Modal fuer 'Aus Paperless wählen' - live gefilterte Liste aller
     Paperless-Dokumente. Mehrfachauswahl (Strg/Umschalt-Klick) moeglich, z.B.
     fuer eine Sammelabbuchung mit mehreren Einzelrechnungen (Amazon o.ae.) -
     bereits mit dieser Buchung verknuepfte Dokumente werden ausgegraut und
@@ -846,7 +846,7 @@ class DocumentSearchDialog(QDialog):
         on_confirm, on_preview=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(tr("Beleg aus Paperless waehlen"))
+        self.setWindowTitle(tr("Beleg aus Paperless wählen"))
         self.resize(640, 580)
         self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
         _apply_window_icon(self)
@@ -862,7 +862,7 @@ class DocumentSearchDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
-        hint = QLabel(tr("Mehrfachauswahl mit Strg/Umschalt-Klick moeglich - z.B. bei einer Sammelabbuchung mit mehreren Einzelrechnungen."))
+        hint = QLabel(tr("Mehrfachauswahl mit Strg/Umschalt-Klick möglich - z.B. bei einer Sammelabbuchung mit mehreren Einzelrechnungen."))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt;")
         layout.addWidget(hint)
@@ -885,7 +885,7 @@ class DocumentSearchDialog(QDialog):
         layout.addWidget(self.list_widget, stretch=1)
         self._populate(docs)
 
-        self.value_label = QLabel(tr("Wert fuer das Custom Field:"))
+        self.value_label = QLabel(tr("Wert für das Custom Field:"))
         self.value_entry = QLineEdit()
         self.value_entry.setStyleSheet(_entry_style())
         self.value_label.hide()
@@ -910,7 +910,7 @@ class DocumentSearchDialog(QDialog):
         )
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
-        self.confirm_btn = QPushButton(tr("Verknuepfen"))
+        self.confirm_btn = QPushButton(tr("Verknüpfen"))
         self.confirm_btn.setEnabled(False)
         self.confirm_btn.setStyleSheet(
             f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
@@ -936,7 +936,7 @@ class DocumentSearchDialog(QDialog):
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, doc)
             if doc["id"] in self.already_linked_ids:
-                item.setText(label + tr("  (bereits verknuepft)"))
+                item.setText(label + tr("  (bereits verknüpft)"))
                 item.setFlags(item.flags() & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled)
             self.list_widget.addItem(item)
 

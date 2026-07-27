@@ -297,7 +297,7 @@ class SearchableListDialog(QDialog):
         cancel_btn = QPushButton(tr("Abbrechen"))
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
-        ok_btn = QPushButton(tr("Auswaehlen"))
+        ok_btn = QPushButton(tr("Auswählen"))
         ok_btn.clicked.connect(self._accept_current)
         btn_row.addWidget(ok_btn)
         layout.addLayout(btn_row)
@@ -452,7 +452,7 @@ class DesktopAppQt(QMainWindow):
         self.csv_name_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt; border: none;")
         layout.addWidget(self.csv_name_label)
 
-        upload_btn = QPushButton(tr("Datei auswaehlen"))
+        upload_btn = QPushButton(tr("Datei auswählen"))
         upload_btn.setStyleSheet(self._flat_button_style())
         upload_btn.clicked.connect(self._on_upload_csv_click)
         layout.addWidget(upload_btn)
@@ -533,7 +533,7 @@ class DesktopAppQt(QMainWindow):
     def _csv_label_text(self) -> str:
         if self.app_state.csv_signature:
             return self.app_state.csv_signature
-        return tr("Keine Datei gewaehlt")
+        return tr("Keine Datei gewählt")
 
     # ------------------------------------------------------------------
     # Hauptbereich
@@ -626,7 +626,7 @@ class DesktopAppQt(QMainWindow):
             self.status_paperless.set_text(tr("Paperless: nicht konfiguriert"))
         elif self._paperless_checking:
             self.status_paperless.set_color(COLORS["text_muted"])
-            self.status_paperless.set_text(tr("Paperless: wird geprueft..."))
+            self.status_paperless.set_text(tr("Paperless: wird geprüft..."))
         elif self._paperless_connected:
             self.status_paperless.set_color(COLORS["green"])
             self.status_paperless.set_text(tr("Paperless: Verbunden"))
@@ -808,7 +808,7 @@ class DesktopAppQt(QMainWindow):
             bottom.addWidget(view_btn)
         elif tx["status"] == TxStatus.MATCHED:
             doc_count = len(tx.get("matched_docs") or [])
-            label = f"🔗 {tr('Automatisch zugeordnet')}" if doc_count <= 1 else f"🔗 {tr('{doc_count} Belege verknuepft', doc_count=doc_count)}"
+            label = f"🔗 {tr('Automatisch zugeordnet')}" if doc_count <= 1 else f"🔗 {tr('{doc_count} Belege verknüpft', doc_count=doc_count)}"
             bottom.addWidget(self._pill(label, COLORS["green"], COLORS["green_dim"]))
         else:
             tag = tx.get("tag") or "SONSTIGES"
@@ -820,7 +820,7 @@ class DesktopAppQt(QMainWindow):
             label = tr(tag.capitalize()) if tag in BUILTIN_TAGS else tag
             bottom.addWidget(self._pill(f"{icon} {label}", color, bg))
         bottom.addStretch()
-        undo_btn = QPushButton(f"↩ {tr('Rueckgaengig')}")
+        undo_btn = QPushButton(f"↩ {tr('Rückgängig')}")
         undo_btn.setStyleSheet(
             f"QPushButton {{ background: transparent; color: {COLORS['text_muted']}; border: none; }}"
             f"QPushButton:hover {{ color: {COLORS['text_primary']}; }}"
@@ -938,7 +938,7 @@ class DesktopAppQt(QMainWindow):
             sugg_row.setStyleSheet(f"background-color: {COLORS['blue_dim']}; border-radius: 10px; border: none;")
             sugg_layout = QHBoxLayout(sugg_row)
             sugg_lbl = QLabel(
-                f"💡  {tr('Vorschlag: {icon} {label} - aehnliche Buchung, bereits so getaggt', icon=icon, label=label)}"
+                f"💡  {tr('Vorschlag: {icon} {label} - ähnliche Buchung, bereits so getaggt', icon=icon, label=label)}"
             )
             sugg_lbl.setStyleSheet(f"color: {COLORS['blue']}; font-weight: bold; border: none;")
             _make_wrap_safe(sugg_lbl)
@@ -952,13 +952,13 @@ class DesktopAppQt(QMainWindow):
             sugg_layout.addWidget(apply_btn)
             outer.addWidget(sugg_row)
 
-        # "Aus Paperless waehlen" ist der haeufige Weg (Beleg existiert
+        # "Aus Paperless wählen" ist der haeufige Weg (Beleg existiert
         # schon dort), die Drop-Zone wird kaum gebraucht - beide daher
         # nebeneinander in einer schmalen Zeile statt der Drop-Zone einen
         # eigenen grossen, dominanten Block zu geben.
         pick_row = QHBoxLayout()
         pick_row.setSpacing(8)
-        paperless_btn = _outline_button(f"📂  {tr('Aus Paperless waehlen')}", COLORS["blue"])
+        paperless_btn = _outline_button(f"📂  {tr('Aus Paperless wählen')}", COLORS["blue"])
         pick_row.addWidget(paperless_btn)
         paperless_btn.clicked.connect(lambda _=False, t=tx: self._on_pick_existing_doc(t))
 
@@ -1109,7 +1109,7 @@ class DesktopAppQt(QMainWindow):
         self._on_tag_click(tx_id, value)
 
     def _on_pick_pdf_file(self, tx_id):
-        path, _ = QFileDialog.getOpenFileName(self, tr("PDF waehlen"), "", "PDF (*.pdf)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("PDF wählen"), "", "PDF (*.pdf)")
         if path:
             self._on_pdf_dropped(tx_id, path)
 
@@ -1238,7 +1238,7 @@ class DesktopAppQt(QMainWindow):
         self.render()
 
     def _on_upload_csv_click(self):
-        path, _ = QFileDialog.getOpenFileName(self, tr("Bank-Kontoauszug waehlen"), "", "CSV-Dateien (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Bank-Kontoauszug wählen"), "", "CSV-Dateien (*.csv)")
         if not path:
             return
         try:
@@ -1250,7 +1250,7 @@ class DesktopAppQt(QMainWindow):
             confirm = QMessageBox.question(
                 self,
                 tr("Anderes Konto?"),
-                result["account_mismatch"] + "\n\n" + tr("Trotzdem fortfahren und zusammenfuehren?"),
+                result["account_mismatch"] + "\n\n" + tr("Trotzdem fortfahren und zusammenführen?"),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -1264,15 +1264,15 @@ class DesktopAppQt(QMainWindow):
             self._show_import_result(result.get("added", 0), result.get("duplicates", 0))
 
     def _show_import_result(self, added: int, duplicates: int):
-        message = tr("{added} neue Buchung(en) hinzugefuegt.", added=added)
+        message = tr("{added} neue Buchung(en) hinzugefügt.", added=added)
         if duplicates:
-            message += "\n" + tr("{duplicates} bereits vorhandene Buchung(en) uebersprungen (Duplikat).", duplicates=duplicates)
+            message += "\n" + tr("{duplicates} bereits vorhandene Buchung(en) übersprungen (Duplikat).", duplicates=duplicates)
         QMessageBox.information(self, tr("Import abgeschlossen"), message)
 
     def _on_bank_import_click(self):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
         Dateianfang. Ablauf: Application ID einmalig abfragen (danach ueber
-        secrets_manager gemerkt), Land + Bank waehlen (durchsuchbare Liste,
+        secrets_manager gemerkt), Land + Bank wählen (durchsuchbare Liste,
         letzte Auswahl vorbelegt), dann Bank-Login im Browser oeffnen
         (enable_banking_client.open_authorization) - die registrierte
         REDIRECT_URL zeigt auf einen entfernten, selbst betriebenen Server
@@ -1303,13 +1303,13 @@ class DesktopAppQt(QMainWindow):
                 secrets_manager.set_secret(self.app_state.base_dir, "enable_banking_application_id", application_id)
             except secrets_manager.SecretsLockedError:
                 QMessageBox.warning(
-                    self, tr("Gesperrt"), tr("Zugangsdaten sind gerade gesperrt (Passphrase noetig).")
+                    self, tr("Gesperrt"), tr("Zugangsdaten sind gerade gesperrt (Passphrase nötig).")
                 )
                 return
 
         last = load_last_selection()
         country, ok = QInputDialog.getText(
-            self, tr("Land"), tr("Laendercode (z.B. AT, DE):"), text=last.get("country", "")
+            self, tr("Land"), tr("Ländercode (z.B. AT, DE):"), text=last.get("country", "")
         )
         if not ok or not country.strip():
             return
@@ -1324,13 +1324,13 @@ class DesktopAppQt(QMainWindow):
 
         if not aspsps:
             QMessageBox.information(
-                self, tr("Keine Banken gefunden"), tr("Fuer {country} wurden keine Banken gefunden.", country=country)
+                self, tr("Keine Banken gefunden"), tr("Für {country} wurden keine Banken gefunden.", country=country)
             )
             return
 
         names = [a.get("name", "?") for a in aspsps]
         preselect = last.get("aspsp_name") if last.get("country") == country else None
-        picker = SearchableListDialog(self, tr("Bank waehlen"), names, preselect=preselect)
+        picker = SearchableListDialog(self, tr("Bank wählen"), names, preselect=preselect)
         if picker.exec() != QDialog.Accepted:
             return
         bank_name = picker.selected_item()
@@ -1348,8 +1348,8 @@ class DesktopAppQt(QMainWindow):
             self,
             tr("Autorisierungs-Code"),
             tr(
-                "Der Standard-Browser hat sich fuer den Bank-Login geoeffnet. Nach erfolgreichem Login "
-                "wirst du auf {url} weitergeleitet - die komplette Ziel-URL hier einfuegen (der Code "
+                "Der Standard-Browser hat sich für den Bank-Login geöffnet. Nach erfolgreichem Login "
+                "wirst du auf {url} weitergeleitet - die komplette Ziel-URL hier einfügen (der Code "
                 "wird automatisch herausgelesen):",
                 url=REDIRECT_URL,
             ),
@@ -1372,7 +1372,7 @@ class DesktopAppQt(QMainWindow):
 
     def _on_bank_auth_finished(self, session, error):
         """Persoenliche, nicht-oeffentliche Erweiterung - siehe
-        _on_bank_import_click. Konto waehlen, Buchungen abrufen und direkt
+        _on_bank_import_click. Konto wählen, Buchungen abrufen und direkt
         in die Matching-Pipeline uebernehmen (render() danach zeigt sie wie
         gewohnt an - kein separater Vorschau-Bestaetigungsschritt mehr,
         siehe Chat)."""
@@ -1385,7 +1385,7 @@ class DesktopAppQt(QMainWindow):
             return
 
         labels = [a.get("uid", str(i)) for i, a in enumerate(accounts)]
-        account_uid, ok = QInputDialog.getItem(self, tr("Konto waehlen"), tr("Konto:"), labels, editable=False)
+        account_uid, ok = QInputDialog.getItem(self, tr("Konto wählen"), tr("Konto:"), labels, editable=False)
         if not ok:
             return
 
@@ -1458,7 +1458,7 @@ class DesktopAppQt(QMainWindow):
     def _on_generate_export_click(self):
         month = self.app_state.selected_month
         if not month:
-            QMessageBox.warning(self, tr("Kein Monat"), tr("Bitte zuerst einen Monat waehlen."))
+            QMessageBox.warning(self, tr("Kein Monat"), tr("Bitte zuerst einen Monat wählen."))
             return
         open_count = count_open_items(self.app_state.transactions, month)
         if open_count:
@@ -1466,8 +1466,8 @@ class DesktopAppQt(QMainWindow):
                 self,
                 tr("Offene Posten"),
                 tr(
-                    "{open_count} Buchung(en) in diesem Monat sind noch ungeklaert (offen, "
-                    "Mehrfach-Match oder Klaerungsbedarf). Der Export ist trotzdem moeglich - die "
+                    "{open_count} Buchung(en) in diesem Monat sind noch ungeklärt (offen, "
+                    "Mehrfach-Match oder Klärungsbedarf). Der Export ist trotzdem möglich - die "
                     "offenen Posten landen in 04_Offene_Posten.csv. Trotzdem fortfahren?",
                     open_count=open_count,
                 ),
