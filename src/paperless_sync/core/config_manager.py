@@ -51,6 +51,24 @@ DEFAULT_CONFIG = {
     # als {name: Nutzungszaehler} gelernt/gemerkt, sobald sie einmal verwendet
     # wurden. Der Zaehler entscheidet, welche Tags oben als Schnell-Buttons
     # neben Privat/Einzahlung/Umbuchung befoerdert werden.
+    # Toleranz-Matching (siehe matcher.find_tolerant_candidates): greift nur,
+    # wenn der exakte Betragsabgleich 0 Treffer findet. ODER-verknuepft -
+    # eine feste absolute Toleranz waere bei kleinen Betraegen unsinnig
+    # grosszuegig, eine feste prozentuale bei grossen Betraegen unsinnig eng.
+    "amount_matching": {
+        "tolerance_abs": 5.0,  # Euro
+        "tolerance_pct": 0.03,  # Anteil, nicht Prozentpunkt (0.03 = 3 %)
+        "top_n_candidates": 3,  # max. vorgeschlagene Kandidaten (Toleranz UND Teilzahlung Fall B)
+    },
+    "duplicate_detection": {
+        "enabled": True,
+    },
+    "split_payment": {
+        "enabled": True,
+        "day_window": 14,  # +/- Tage um Beleg- bzw. Buchungsdatum
+        "max_documents": 2,  # Fall B: max. Anzahl kombinierter Dokumente
+        "max_pool_size": 8,  # Fall B: Sicherheitsgrenze gegen Kombinatorik-Explosion
+    },
     "custom_tags": {},
     # Merkt sich {Verwendungszweck: Tag}, sobald eine Transaktion getaggt
     # wird. Kuenftige Buchungen mit EXAKT demselben Verwendungszweck werden
@@ -267,6 +285,9 @@ def _deep_merge_defaults(data: dict) -> dict:
     merged = json.loads(json.dumps(DEFAULT_CONFIG))
     merged["csv_mappings"] = data.get("csv_mappings", {}) or {}
     merged["amount_detection"].update(data.get("amount_detection", {}) or {})
+    merged["amount_matching"].update(data.get("amount_matching", {}) or {})
+    merged["duplicate_detection"].update(data.get("duplicate_detection", {}) or {})
+    merged["split_payment"].update(data.get("split_payment", {}) or {})
 
     raw_custom_tags = data.get("custom_tags", {})
     if isinstance(raw_custom_tags, list):
