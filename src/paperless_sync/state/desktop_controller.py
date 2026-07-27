@@ -80,18 +80,28 @@ class Controller:
         eingelesen wird - genau das ist einmal real passiert (siehe Chat).
 
         Duplikat-Schutz: eine "neue" Buchung gilt als bereits vorhanden,
-        wenn Datum+Betrag+Verwendungszweck exakt uebereinstimmen (z.B. bei
-        ueberlappenden Zeitraeumen zwischen zwei Importen) - nur echte
-        Neuzugaenge werden angehaengt. id/display_number werden fuer die
-        komplette, gemergte Liste neu vergeben (siehe
-        matcher.renumber_transactions), Status/Tags/Matches bestehender
-        Eintraege bleiben dabei unangetastet.
+        wenn Datum+Betrag uebereinstimmen (z.B. bei ueberlappenden
+        Zeitraeumen zwischen zwei Importen) - bewusst OHNE den
+        Verwendungszweck im Schluessel: der ist bei zwei verschiedenen
+        Datenquellen fuer dieselbe reale Buchung oft NICHT textgleich (z.B.
+        CSV-Spaltentext vs. Enable-Banking-remittance_information fuer
+        dieselbe Buchung) - ein Abgleich inkl. Verwendungszweck haette
+        solche Buchungen faelschlich als neu erkannt und dupliziert
+        (echter Bug, aufgetreten beim CSV+Bank-API-Mix, siehe Chat).
+        Gleiches Datum+Betrag OHNE Uebereinstimmung im Text ist der
+        gleiche Grenzfall wie eine mehrdeutige Paperless-Zuordnung (siehe
+        matcher.match_transactions/TxStatus.MULTI_MATCH) - dort wird
+        Mehrdeutigkeit bei gleichem Betrag ebenfalls bewusst in Kauf
+        genommen statt zusaetzlich zu raten. Nur echte Neuzugaenge werden
+        angehaengt. id/display_number werden fuer die komplette, gemergte
+        Liste neu vergeben (siehe matcher.renumber_transactions), Status/
+        Tags/Matches bestehender Eintraege bleiben dabei unangetastet.
 
         Gibt die Anzahl tatsaechlich neu hinzugefuegter (nicht
         doppelter) Transaktionen zurueck."""
         state = self.state
-        existing_keys = {(t["date"], t["amount_raw"], t["purpose"]) for t in state.transactions}
-        added = [t for t in new_transactions if (t["date"], t["amount_raw"], t["purpose"]) not in existing_keys]
+        existing_keys = {(t["date"], t["amount_raw"]) for t in state.transactions}
+        added = [t for t in new_transactions if (t["date"], t["amount_raw"]) not in existing_keys]
         if added:
             state.transactions = state.transactions + added
             renumber_transactions(state.transactions)

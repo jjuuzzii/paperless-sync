@@ -654,6 +654,16 @@ class SettingsDialog(QDialog):
                 tr("Das ZIP enthaelt keine bekannten Backup-Dateien (config.json / .env / session_state.json).")
             )
             return
+        # WICHTIG: DesktopAppQt.closeEvent() ruft beim Beenden unbedingt
+        # app_state.persist_session() auf (fuer den normalen Fall: nichts
+        # beim Schliessen verlieren) - das wuerde hier die gerade erst von
+        # restore_backup() geschriebene session_state.json sofort wieder
+        # mit dem noch im Speicher stehenden ALTEN Stand ueberschreiben.
+        # persist_session() selbst bricht fruehzeitig ab, wenn transactions
+        # leer ist - genau das hier bewusst erzwingen, damit der Restore
+        # tatsaechlich bestehen bleibt (echter Bug, der genau so aufgetreten
+        # ist, siehe Chat).
+        self.state_ref.transactions = []
         QMessageBox.information(
             self,
             tr("Backup wiederhergestellt"),

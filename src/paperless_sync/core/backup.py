@@ -15,7 +15,12 @@ sein.
 Passwort gesetzt -> AES-256-verschluesseltes ZIP (pyzipper, WZ_AES). Kein
 Passwort -> normales, unverschluesseltes ZIP - die UI-Schicht MUSS in
 diesem Fall deutlich warnen (siehe SettingsDialog), dieses Modul selbst
-zeigt keine Dialoge und faellt nie stillschweigend zurueck."""
+zeigt keine Dialoge und faellt nie stillschweigend zurueck.
+
+Sichert zusaetzlich den kompletten Inhalt eines optionalen lokalen
+Erweiterungsordners (siehe config_manager.get_enable_banking_key_path) -
+bewusst generisch (keine einzelnen Dateinamen hartcodiert), damit dieses
+oeffentliche Modul nicht wissen muss, was genau darin liegt."""
 from __future__ import annotations
 
 import io
@@ -26,9 +31,20 @@ from pathlib import Path
 import pyzipper
 
 from . import secrets_manager
+from .config_manager import get_enable_banking_key_path
 
 BACKUP_FILES = ["config.json", ".env", "session_state.json"]
 SECRETS_ARCNAME = "secrets.json"
+EXTENSIONS_ARCPREFIX = "extensions/"
+
+
+def _extension_dir() -> Path:
+    """Optionaler lokaler Erweiterungsordner (siehe config_manager.
+    get_enable_banking_key_path) - falls vorhanden, wird sein kompletter
+    Inhalt mit gesichert/wiederhergestellt, OHNE dass dieses (oeffentliche)
+    Modul wissen muss, was genau darin liegt oder wofuer es ist. Bewusst
+    generisch statt einzelne Dateinamen hartzucodieren."""
+    return get_enable_banking_key_path().parent
 
 
 class WrongBackupPasswordError(Exception):
@@ -68,6 +84,11 @@ def create_backup(base_dir: Path, password: str | None = None, secrets_passphras
                 zf.write(path, arcname=name)
         if secrets:
             zf.writestr(SECRETS_ARCNAME, json.dumps(secrets))
+        ext_dir = _extension_dir()
+        if ext_dir.exists():
+            for path in ext_dir.iterdir():
+                if path.is_file():
+                    zf.write(path, arcname=f"{EXTENSIONS_ARCPREFIX}{path.name}")
     return buf.getvalue()
 
 
@@ -104,6 +125,16 @@ def restore_backup(
                 for secret_name, value in secrets.items():
                     secrets_manager.set_secret(base_dir, secret_name, value, passphrase=secrets_passphrase)
                 restored.append(SECRETS_ARCNAME)
+            ext_names = [n for n in names if n.startswith(EXTENSIONS_ARCPREFIX) and n != EXTENSIONS_ARCPREFIX]
+            if ext_names:
+                ext_dir = _extension_dir()
+                ext_dir.mkdir(parents=True, exist_ok=True)
+                for name in ext_names:
+                    filename = name[len(EXTENSIONS_ARCPREFIX):]
+                    if not filename or "/" in filename or "\\" in filename:
+                        continue  # keine verschachtelten Pfade/Path-Traversal aus dem ZIP uebernehmen
+                    (ext_dir / filename).write_bytes(zf.read(name))
+                restored.append("extensions")
     except RuntimeError as exc:
         # pyzipper/pycryptodomex wirft RuntimeError("Bad password for
         # file...") bei falschem oder fehlendem Passwort fuer ein
