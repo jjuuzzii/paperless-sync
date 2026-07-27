@@ -18,6 +18,7 @@ import pytest
 from paperless_sync.core.exporter import (
     _build_einzahlungen_csv,
     _build_getaggte_ohne_beleg_csv,
+    _build_jahresuebersicht_csv,
     _build_kontoauszug_csv,
     _build_offene_posten_csv,
     _build_uebersicht_csv,
@@ -411,3 +412,61 @@ def test_zip_export_folder_preserves_relative_paths_after_extraction(tmp_path):
     rel_path = uebersicht_rows[1][3]
     assert rel_path
     assert (reopened_root / "2026-01_Januar" / rel_path).exists()
+
+
+# --- 00_Jahresuebersicht.csv -------------------------------------------------
+
+def test_build_jahresuebersicht_csv_combines_all_months(tmp_path):
+    year_root = tmp_path / "Jahresexport_2026"
+    for month_str, purpose in (("2026-01", "Januar-Buchung"), ("2026-02", "Februar-Buchung")):
+        tx = make_transaction(id_="001", date_=date(2026, int(month_str[-2:]), 10), purpose=purpose, row_index=None)
+        generate_export(year_root, month_str, [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+
+    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";")
+    rows = _rows(csv_bytes)
+    assert rows[0] == [
+        "Monat", "Relativer Pfad zum Monatsordner", "Datum", "Betrag", "Verwendungszweck",
+        "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag",
+    ]
+    assert len(rows) - 1 == 2
+    assert rows[1][0] == "2026-01"
+    assert rows[1][1] == "2026-01_Januar"
+    assert rows[1][4] == "Januar-Buchung"
+    assert rows[2][0] == "2026-02"
+    assert rows[2][4] == "Februar-Buchung"
+
+
+def test_build_jahresuebersicht_csv_skips_missing_month_folder(tmp_path):
+    year_root = tmp_path / "Jahresexport_2026"
+    tx = make_transaction(id_="001", date_=date(2026, 1, 10), row_index=None)
+    generate_export(year_root, "2026-01", [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+
+    # "2026-02" wurde nie generiert (z.B. teilweiser Export) - darf nicht crashen
+    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";")
+    rows = _rows(csv_bytes)
+    assert len(rows) - 1 == 1
+
+
+def test_export_fiscal_year_writes_jahresuebersicht_with_all_transactions(tmp_path):
+    transactions = [
+        make_transaction(id_="001", date_=date(2026, 1, 5), purpose="Jan", status=TxStatus.MATCHED, row_index=None,
+                          matched_docs=[{"id": 1, "original_file_name": "r.pdf"}]),
+        make_transaction(id_="002", date_=date(2026, 6, 15), purpose="Jun", status=TxStatus.UNRESOLVED, row_index=None),
+        make_transaction(id_="003", date_=date(2026, 12, 20), purpose="Dez", status=TxStatus.TAGGED, tag="PRIVAT", row_index=None),
+    ]
+    client = FakePaperlessClient({1: b"%PDF-1.4 fake"})
+
+    year_root = export_fiscal_year(
+        tmp_path, 2026, {"calendar_year": True}, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", client
+    )
+
+    assert (year_root / "00_Jahresuebersicht.csv").exists()
+    rows = _rows((year_root / "00_Jahresuebersicht.csv").read_bytes())
+    assert len(rows) - 1 == 3  # alle drei Buchungen aus allen 12 Monaten, keine fehlt
+    purposes = {row[4] for row in rows[1:]}
+    assert purposes == {"Jan", "Jun", "Dez"}
+
+    # Von der Jahresuebersicht aus zum Beleg der Januar-Buchung zurueckverfolgen
+    jan_row = next(row for row in rows[1:] if row[4] == "Jan")
+    month_folder, beleg_pfad = jan_row[1], jan_row[5]
+    assert (year_root / month_folder / beleg_pfad).exists()

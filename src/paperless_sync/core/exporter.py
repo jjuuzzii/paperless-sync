@@ -330,10 +330,43 @@ def export_fiscal_year(
     year_root = Path(export_base_dir) / fiscal_year_folder_name(start_year, fiscal_config)
     year_root.mkdir(parents=True, exist_ok=True)
 
-    for month_str in get_fiscal_year_months(start_year, fiscal_config):
+    month_strs = get_fiscal_year_months(start_year, fiscal_config)
+    for month_str in month_strs:
         generate_export(year_root, month_str, transactions, csv_df, csv_delimiter, client)
 
+    (year_root / "00_Jahresuebersicht.csv").write_bytes(
+        _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter)
+    )
+
     return year_root
+
+
+def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_delimiter: str) -> bytes:
+    """00_Jahresuebersicht.csv - fasst die bereits geschriebenen
+    00_Uebersicht.csv ALLER 12 Monate (siehe export_fiscal_year) in einer
+    Tabelle zusammen, ergaenzt um 'Monat' und 'Relativer Pfad zum
+    Monatsordner' vorne dran, damit jede Zeile von der Jahresuebersicht aus
+    zum passenden Beleg im jeweiligen Unterordner zurueckverfolgbar bleibt.
+    Liest bewusst die bereits erzeugten Monatsdateien zurueck, statt Status/
+    Belegpfade ein zweites Mal aus den Transaktionen zu berechnen - so
+    bleiben Jahres- und Monatsuebersicht garantiert konsistent (gleiche
+    zentrale Status-Werte aus tx_status.py, einmal pro Monat berechnet)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
+    writer.writerow(
+        ["Monat", "Relativer Pfad zum Monatsordner", "Datum", "Betrag", "Verwendungszweck",
+         "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"]
+    )
+    for month_str in month_strs:
+        folder_name = month_folder_name(month_str)
+        month_csv_path = year_root / folder_name / "00_Uebersicht.csv"
+        if not month_csv_path.exists():
+            continue
+        text = month_csv_path.read_bytes().decode("utf-8-sig")
+        rows = list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))
+        for row in rows[1:]:  # Kopfzeile ueberspringen
+            writer.writerow([month_str, folder_name] + row)
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def zip_export_folder(folder: Path) -> bytes:
