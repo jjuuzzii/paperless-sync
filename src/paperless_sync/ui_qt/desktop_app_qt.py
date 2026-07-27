@@ -55,7 +55,6 @@ from paperless_sync.core.config_manager import get_resource_dir, get_enable_bank
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
-from paperless_sync.core.match_candidate import MatchReasonType
 from paperless_sync.core.exporter import count_open_items
 from version import __version__
 
@@ -1013,59 +1012,83 @@ class DesktopAppQt(QMainWindow):
         return card
 
     def _build_ambiguous_picker(self, outer: QVBoxLayout, tx: dict):
-        # Nur Kandidaten mit genau einem Dokument sind hier waehlbar (siehe
-        # Controller.on_ambiguous_doc_selected) - Duplikat-/Teilzahlungs-
-        # Kandidaten (documents-Laenge 0 bzw. >1) haben noch keine eigene
-        # Karte/Aktion, das ist ein spaeterer UI-Schritt.
+        """Kandidatenliste (siehe MatchCandidate) - ein Klick auf einen
+        Kandidaten verknuepft ihn direkt, kein separater Bestaetigungs-
+        Schritt mehr noetig. Aufklappbar (bei genau einem Kandidaten
+        direkt sichtbar), damit die Karte bei mehreren Vorschlaegen nicht
+        unuebersichtlich wird. Nur Kandidaten mit genau einem Dokument sind
+        hier waehlbar (siehe Controller.on_ambiguous_doc_selected) -
+        Duplikat-/Teilzahlungs-Kandidaten (documents-Laenge 0 bzw. >1)
+        haben noch keine eigene Karten-Aktion."""
         candidates = [c for c in (tx.get("candidate_docs") or []) if len(c.get("documents") or []) == 1]
-        row = QHBoxLayout()
-        combo = NoScrollComboBox()
-        combo.setStyleSheet(
-            f"QComboBox {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
-            f"border-radius: 10px; padding: 8px; border: none; }}"
-        )
-        # Ohne Begrenzung richtet Qt die Combobox-Breite am LAENGSTEN Eintrag
-        # aus (AdjustToContentsOnFirstShow) - bei langen Paperless-Titeln
-        # kann das die ganze Karte in die Breite zwingen. Mit fester
-        # Content-Laenge zeigt die geschlossene Box stattdessen "...", die
-        # Dropdown-Liste selbst bleibt unveraendert vollstaendig lesbar.
-        combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        combo.setMinimumContentsLength(20)
-        labels = [self._candidate_label(c) for c in candidates]
-        label_to_doc = {label: c["documents"][0] for label, c in zip(labels, candidates)}
-        combo.addItems(labels or [tr("Keine Kandidaten geladen")])
-        row.addWidget(combo, stretch=1)
+        if not candidates:
+            empty_lbl = QLabel(tr("Keine Kandidaten geladen"))
+            empty_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; border: none;")
+            outer.addWidget(empty_lbl)
+            return
 
-        def _confirm():
-            doc = label_to_doc.get(combo.currentText())
-            if doc is None:
-                return
-            try:
-                self.controller.on_ambiguous_doc_selected(tx["id"], doc["id"])
-            except Exception as exc:
-                QMessageBox.critical(self, tr("Fehlgeschlagen"), str(exc))
-                return
-            self._refresh_single_transaction(tx["id"])
+        list_frame = QFrame()
+        list_frame.setStyleSheet("border: none;")
+        list_layout = QVBoxLayout(list_frame)
+        list_layout.setContentsMargins(0, 6, 0, 0)
+        list_layout.setSpacing(4)
+        for candidate in candidates:
+            list_layout.addWidget(self._build_candidate_row(tx, candidate))
 
-        confirm_btn = QPushButton(tr("Zuordnen"))
-        confirm_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {COLORS['amber']}; color: #1e1e2e; border-radius: 10px; "
-            f"padding: 8px 16px; font-weight: bold; }}"
-        )
-        confirm_btn.clicked.connect(_confirm)
-        row.addWidget(confirm_btn)
-        outer.addLayout(row)
+        toggle_btn = QPushButton()
+        toggle_btn.setCursor(Qt.PointingHandCursor)
+        toggle_btn.setStyleSheet(self._flat_button_style())
 
-    @staticmethod
-    def _candidate_label(candidate: dict) -> str:
+        def _sync_toggle_text():
+            expanded = list_frame.isVisible()
+            arrow = "▾" if expanded else "▸"
+            action = tr("ausblenden") if expanded else tr("anzeigen")
+            noun = tr("Kandidat") if len(candidates) == 1 else tr("Kandidaten")
+            toggle_btn.setText(f"{arrow}  {len(candidates)} {noun} {action}")
+
+        def _toggle():
+            list_frame.setVisible(not list_frame.isVisible())
+            _sync_toggle_text()
+
+        toggle_btn.clicked.connect(_toggle)
+        list_frame.setVisible(len(candidates) == 1)  # bei genau 1 Vorschlag keine Klick-Huerde noetig
+        _sync_toggle_text()
+
+        outer.addWidget(toggle_btn)
+        outer.addWidget(list_frame)
+
+    def _build_candidate_row(self, tx: dict, candidate: dict) -> QPushButton:
+        """Eine Zeile der Kandidatenliste: Dokumentname, Betrag, Datum,
+        Differenz zur Buchung (nur bei Toleranz-Kandidaten - beim exakten
+        Mehrfachtreffer ist amount_delta None). Die ganze Zeile ist
+        klickbar - kein extra Bestaetigungs-Button noetig."""
         doc = candidate["documents"][0]
-        label = f"#{doc['id']} - {doc['title'] or doc.get('original_file_name') or tr('ohne Titel')}"
-        if doc.get("correspondent_name"):
-            label += f" · {doc['correspondent_name']}"
-        label += f" · {doc['date'].strftime('%d.%m.%Y') if doc.get('date') else tr('kein Datum')}"
-        if candidate.get("reason_type") == MatchReasonType.TOLERANT_AMOUNT:
-            label += f" · Δ {candidate['amount_delta']:+.2f} EUR (kein exakter Treffer)"
-        return label
+        name = doc.get("original_file_name") or doc.get("title") or tr("ohne Titel")
+        if len(name) > 32:
+            name = name[:30] + "…"
+        date_text = doc["date"].strftime("%d.%m.%Y") if doc.get("date") else tr("kein Datum")
+        amount_text = f"{doc['amount']:.2f} €" if doc.get("amount") is not None else "?"
+        parts = [f"📄 {name}", amount_text, date_text]
+        delta = candidate.get("amount_delta")
+        if delta:
+            parts.append(f"Δ {delta:+.2f} €")
+        btn = QPushButton("   ·   ".join(parts))
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            f"QPushButton {{ background-color: {COLORS['bg_input']}; color: {COLORS['text_primary']}; "
+            f"border-radius: 8px; padding: 8px 10px; text-align: left; border: none; }}"
+            f"QPushButton:hover {{ background-color: {COLORS['bg_card_hover']}; }}"
+        )
+        btn.clicked.connect(lambda _=False, t=tx, d=doc: self._on_candidate_click(t["id"], d["id"]))
+        return btn
+
+    def _on_candidate_click(self, tx_id: str, paperless_doc_id: int):
+        try:
+            self.controller.on_ambiguous_doc_selected(tx_id, paperless_doc_id)
+        except Exception as exc:
+            QMessageBox.critical(self, tr("Fehlgeschlagen"), str(exc))
+            return
+        self._refresh_single_transaction(tx_id)
 
     def _build_tag_row(self, outer: QVBoxLayout, tx: dict):
         promoted = self.controller.top_custom_tags(limit=3)
