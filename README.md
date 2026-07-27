@@ -12,6 +12,7 @@ Built and released for Windows; the underlying app (PySide6/Qt) runs cross-platf
 2. **Match** each transaction against your Paperless-ngx documents by amount — either parsed from the filename via a configurable regex (e.g. `_EUR12.34.pdf`) or read from a Paperless custom field.
 3. **Resolve** what's left by hand: upload a PDF (drag & drop or file picker), pick an existing Paperless document, or tag the transaction (Private / Deposit / Transfer / your own custom tags) when no receipt is needed. Multiple documents can be linked to one transaction (e.g. a combined charge with several individual invoices).
 4. **Export** a clean, numbered folder per month — matched PDFs, tag notes for untagged bookings, a filtered copy of the original CSV, a list of unresolved transactions, and a separate list of all "Deposit"-tagged bookings — ready to hand to an accountant.
+5. **Bundle a whole fiscal year** into one folder with a single click — all 12 monthly folders plus a combined overview (CSV and PDF) and a dedicated summary of anything still unresolved, optionally zipped up.
 
 The app learns as you go: once you tag a recurring transaction (e.g. a subscription with a varying reference number), it suggests the same tag next time a similar booking shows up.
 
@@ -24,6 +25,7 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 - **Tolerant amount matching & split-payment detection** — optional (off by default until their candidate-selection UI is refined further): suggest receipts within a configurable amount tolerance, or a receipt/booking that's really the sum of several others.
 - **Learned tag suggestions** — recurring bookings (same purpose text, ignoring dates/reference numbers) get a one-click tag suggestion.
 - **Multi-document matching** — link several Paperless documents to a single transaction (e.g. a marketplace payout covering multiple invoices).
+- **Yearly export** — bundle a full fiscal year (calendar year, or a custom fiscal year start month) into one folder: all 12 monthly exports, a combined overview CSV/PDF, and a dedicated open-items summary — see [below](#yearly-export).
 - **Live search & filter** — filter the transaction list by text, amount (or range), and date range, combinable with the status tabs; a hint always shows how many bookings are currently visible.
 - **Keyboard navigation** — arrow keys to move between transactions, Ctrl+Down to jump to the next unresolved one.
 - **mTLS client certificate support** — for Paperless instances behind something like Cloudflare Access with a PKCS#12 client certificate.
@@ -96,6 +98,19 @@ All settings are reachable from the "⚙️ Settings" button in the app — no m
 - **Custom tags, noise terms, backup/restore, language, company logo**
 
 User data (config, session state, backups) lives in the platform-standard per-user app data location when running a built app — Windows: `%APPDATA%\PaperlessSync`, macOS: `~/Library/Application Support/PaperlessSync`, Linux: `~/.config/PaperlessSync` — and next to the source files when run from source. Credentials are stored separately — see [Privacy & Security](#privacy--security).
+
+## Yearly export
+
+Next to the monthly export, a full fiscal year can be bundled into one folder with a single click — the "JAHRESEXPORT" button in the sidebar.
+
+- **Fiscal year setting** (Settings → "Geschäftsjahr"): defaults to the calendar year; switch to a custom fiscal year start month (e.g. July) if that matches your accounting instead.
+- Clicking the button asks for the fiscal year's start year, then builds `Jahresexport_<year>` (or `Jahresexport_<year>-<year+1>` for a custom fiscal year) in the same export folder as the monthly export, containing:
+  - All 12 monthly folders, freshly regenerated from the current data — regardless of whether any of them were already exported separately before.
+  - `00_Jahresuebersicht.csv` — every transaction of the year in one table, with columns showing which month/folder each one belongs to.
+  - `00_Offene_Posten_Jahr.csv` — only the still-unresolved transactions across the whole year, with a per-month/status summary count at the top.
+  - `00_Jahresuebersicht.pdf` — a cover page, a summary page listing every open item first (color-coded by status, counted per month) before the full transaction list, and then the complete year grouped by month.
+- If anything is still unresolved anywhere in the year, a warning shows how many and in which months before the export runs — same idea as the existing monthly-export warning, just year-wide.
+- The finished folder can optionally be saved as a ZIP right after the export completes.
 
 ## Optional: Setting up bank import (Enable Banking)
 
