@@ -18,6 +18,7 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 ## Features
 
 - **Automatic CSV parsing** — encoding/delimiter/date/amount format detection, works with most European bank export formats.
+- **Optional direct bank import** — fetch transactions straight from your bank via your own [Enable Banking](https://enablebanking.com/) application, guided by an in-app setup wizard — see [below](#optional-setting-up-bank-import-enable-banking).
 - **Two receipt-detection methods** — filename regex or a Paperless custom field holding the invoice amount.
 - **Learned tag suggestions** — recurring bookings (same purpose text, ignoring dates/reference numbers) get a one-click tag suggestion.
 - **Multi-document matching** — link several Paperless documents to a single transaction (e.g. a marketplace payout covering multiple invoices).
@@ -86,9 +87,26 @@ All settings are reachable from the "⚙️ Settings" button in the app — no m
 
 User data (config, session state, backups) lives in the platform-standard per-user app data location when running a built app — Windows: `%APPDATA%\PaperlessSync`, macOS: `~/Library/Application Support/PaperlessSync`, Linux: `~/.config/PaperlessSync` — and next to the source files when run from source. Credentials are stored separately — see [Privacy & Security](#privacy--security).
 
+## Optional: Setting up bank import (Enable Banking)
+
+As an alternative to uploading a bank statement CSV, transactions can be imported directly from your bank via [Enable Banking](https://enablebanking.com/), an open banking API provider. This is entirely optional — CSV import keeps working unchanged either way.
+
+Every user registers and connects **their own** Enable Banking application — nothing is shared, and no credentials are bundled with the app. The easiest way to set this up is the in-app wizard: **Settings → Bank-Import (Enable Banking) → "Start setup wizard"**. It walks through all the steps below, including copy-to-clipboard values and a connection test with a preview of the fetched transactions.
+
+The same steps, in case you want to follow along manually or the wizard gets stuck:
+
+1. Sign in at [enablebanking.com/sign-in](https://enablebanking.com/sign-in) and go to "Applications" → "Add a new application".
+2. Register it with **Environment: Production** and **Redirect URL: `https://redirectmeto.com/http://localhost:8765/callback`** (the app runs a local HTTP listener on that port during authorization; redirectmeto.com forwards the HTTPS redirect Enable Banking requires — even for localhost — to it, without needing your own certificate). Pick any application name you like.
+3. A private key (`.pem` file) is downloaded automatically when the application is created. Move it to the folder the app shows you (default: the platform user-data location's `enable_banking/` subfolder, see above) — the wizard's "Open folder" button takes you straight there.
+4. Enter the **Application ID** from the Enable Banking control panel into the wizard (or Settings) — it's saved to `config.json` immediately.
+5. In the control panel, whitelist your own account for the application. "Restricted production" mode is meant for exactly this — personal use of an application only you access — and needs no separate contract for that.
+6. Test the connection from the wizard; on success it shows a preview of the first few fetched transactions.
+
+Once set up, a "Von Bank importieren" ("Import from bank") button appears in the sidebar. Clicking it asks for a date range (defaulting to the currently selected month), then opens your bank's login in the browser. Depending on your bank, a fresh login may be required for every single import — many banks don't support the PSD2 exception for extended session validity, so this is expected, not a bug. Some banks also limit how far back transaction history can be fetched (often around 90 days) regardless of the date range you pick.
+
 ## Privacy & Security
 
-- **Everything runs locally.** Your bank statement CSV is parsed on your machine; matching happens directly against the Paperless-ngx instance you configure. There's no cloud service, no telemetry, no analytics — bank transaction data never leaves your device except to the Paperless-ngx server you point the app at (which you host/control).
+- **Everything runs locally.** Your bank statement CSV is parsed on your machine; matching happens directly against the Paperless-ngx instance you configure. There's no cloud service, no telemetry, no analytics — bank transaction data never leaves your device except to the Paperless-ngx server you point the app at (which you host/control), or — only if you opt into it — to your own Enable Banking application and your bank, for the direct bank import described above. The Enable Banking authorization code briefly passes through redirectmeto.com (a public HTTPS-redirect forwarding service) on its way back to a local listener on your machine; the code is worthless without your private key, which never leaves your device.
 - **Credentials are never stored in plain text.** The Paperless API token and mTLS client certificate password are kept in your operating system's native credential store — Windows Credential Manager, macOS Keychain, or the Linux Secret Service (via the [keyring](https://pypi.org/project/keyring/) package). If no OS credential store is available (can happen on some minimal/headless Linux setups), the app falls back to passphrase-based encryption (AES via [Fernet](https://cryptography.io/en/latest/fernet/)) instead of ever silently falling back to plain text.
 - **The working session is encrypted too.** `session_state.json` — the in-progress state that lets you close the app mid-reconciliation without losing work — contains transaction details and uploaded receipts, so it's encrypted at rest with the same key management as above.
 - **Backups can be password-protected.** Since a backup includes your credentials (so it's actually useful after restoring on a new machine), the app prompts for a password when creating one and encrypts the ZIP with AES if you set one. Skipping the password triggers an explicit warning — it's never silently unencrypted without you choosing that.

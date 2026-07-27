@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import date, datetime
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap, QShortcut, QKeySequence
@@ -50,24 +51,30 @@ from PySide6.QtWidgets import (
 # (Repo-Root) und die paperless_sync.core/state-Imports unten (src/).
 from paperless_sync.state.desktop_state import AppState
 from paperless_sync.state.desktop_controller import Controller, BUILTIN_TAGS, TAG_ICONS
-from .dialogs_qt import MappingDialog, SettingsDialog, DocumentSearchDialog, PdfViewerDialog
-from paperless_sync.core.config_manager import get_resource_dir, get_enable_banking_key_path
+from .dialogs_qt import (
+    MappingDialog,
+    SettingsDialog,
+    DocumentSearchDialog,
+    PdfViewerDialog,
+    SearchableListDialog,
+    EnableBankingSetupWizard,
+    EnableBankingDateRangeDialog,
+    _EnableBankingAuthWorker,
+    _last_day_of_month,
+)
+from paperless_sync.core.config_manager import get_resource_dir, get_effective_enable_banking_key_path
 from .theme_qt import COLORS, TAG_COLORS, TAG_COLORS_DIM, custom_tag_color, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language
 from paperless_sync.core.tx_status import TxStatus, DONE_STATUSES
 from paperless_sync.core.exporter import count_open_items
 from paperless_sync.core.csv_utils import parse_date
+from paperless_sync.core.enable_banking_client import (
+    EnableBankingClient,
+    EnableBankingError,
+    transactions_to_dataframe,
+    ENABLE_BANKING_MAPPING,
+)
 from version import __version__
-
-# Persoenliche, NICHT-oeffentliche Erweiterung (siehe .gitignore) - existiert
-# nur lokal, andere Checkouts/der oeffentliche Build haben dieses Modul
-# nicht. App funktioniert ohne unveraendert weiter (nur CSV-Import),
-# absichtlich ohne Fehlermeldung oder sichtbaren Hinweis in dem Fall.
-try:
-    from paperless_sync.core.enable_banking_client import EnableBankingClient
-    ENABLE_BANKING_AVAILABLE = True
-except ImportError:
-    ENABLE_BANKING_AVAILABLE = False
 
 # Gleiche Bereinigung wie in desktop_app.py: IBAN/BIC sind im
 # Verwendungszweck nie hilfreich, nur fuer die Anzeige entfernt.
@@ -330,67 +337,6 @@ class StatusDot(QWidget):
         self.label.setText(text)
 
 
-class SearchableListDialog(QDialog):
-    """Durchsuchbare Auswahlliste - fuer sehr lange Listen (z.B. hunderte
-    Banken pro Land bei der Enable-Banking-Erweiterung), bei denen
-    QInputDialog.getItem() unhandlich waere. Tippen filtert die Liste live;
-    generisch gehalten (kein Enable-Banking-Bezug im Namen/Code), auch
-    fuer andere lange Auswahllisten wiederverwendbar."""
-
-    def __init__(self, parent, title: str, items: list[str], preselect: str | None = None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(420, 480)
-        self._all_items = items
-        self._selected: str | None = None
-
-        layout = QVBoxLayout(self)
-        self._filter_edit = QLineEdit()
-        self._filter_edit.setPlaceholderText(tr("Suchen..."))
-        self._filter_edit.textChanged.connect(self._apply_filter)
-        layout.addWidget(self._filter_edit)
-
-        self._list_widget = QListWidget()
-        self._list_widget.itemDoubleClicked.connect(lambda _item: self._accept_current())
-        layout.addWidget(self._list_widget, stretch=1)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        cancel_btn = QPushButton(tr("Abbrechen"))
-        cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(cancel_btn)
-        ok_btn = QPushButton(tr("Auswählen"))
-        ok_btn.clicked.connect(self._accept_current)
-        btn_row.addWidget(ok_btn)
-        layout.addLayout(btn_row)
-
-        self._populate(items)
-        if preselect:
-            matches = self._list_widget.findItems(preselect, Qt.MatchExactly)
-            if matches:
-                self._list_widget.setCurrentItem(matches[0])
-                self._list_widget.scrollToItem(matches[0])
-
-    def _populate(self, items: list[str]):
-        self._list_widget.clear()
-        self._list_widget.addItems(items)
-        if self._list_widget.count() > 0 and self._list_widget.currentRow() < 0:
-            self._list_widget.setCurrentRow(0)
-
-    def _apply_filter(self, text: str):
-        text_lower = text.lower()
-        self._populate([i for i in self._all_items if text_lower in i.lower()])
-
-    def _accept_current(self):
-        item = self._list_widget.currentItem()
-        if item is not None:
-            self._selected = item.text()
-            self.accept()
-
-    def selected_item(self) -> str | None:
-        return self._selected
-
-
 class DesktopAppQt(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -525,15 +471,19 @@ class DesktopAppQt(QMainWindow):
         layout.addWidget(upload_btn)
         layout.addSpacing(8)
 
-        # Persoenliche, nicht-oeffentliche Erweiterung - siehe Import oben.
-        # Ohne das Modul (oeffentlicher Checkout) oder ohne abgelegten
-        # Schluessel bleibt die App unveraendert nur mit CSV-Import
-        # nutzbar, ganz ohne sichtbaren Hinweis auf dieses Feature.
-        if ENABLE_BANKING_AVAILABLE and get_enable_banking_key_path().exists():
-            bank_import_btn = QPushButton(tr("Von Bank importieren"))
-            bank_import_btn.setStyleSheet(self._flat_button_style())
-            bank_import_btn.clicked.connect(self._on_bank_import_click)
-            layout.addWidget(bank_import_btn)
+        # Nur sichtbar, wenn eine eigene Enable-Banking-Anwendung eingerichtet
+        # ist (Application-ID + gueltige .pem-Datei, siehe
+        # EnableBankingSetupWizard) - ohne das bleibt die App unveraendert
+        # nur mit CSV-Import nutzbar.
+        self.bank_import_btn = None
+        if self._enable_banking_ready():
+            self.bank_import_btn = QPushButton(tr("Von Bank importieren"))
+            self.bank_import_btn.setToolTip(
+                tr("Öffnet den Bank-Login im Browser – bei jedem Import erneut nötig.")
+            )
+            self.bank_import_btn.setStyleSheet(self._flat_button_style())
+            self.bank_import_btn.clicked.connect(self._on_bank_import_click)
+            layout.addWidget(self.bank_import_btn)
             layout.addSpacing(8)
 
         self.match_btn = QPushButton(f"🔍  {tr('Mit Paperless abgleichen')}")
@@ -601,6 +551,10 @@ class DesktopAppQt(QMainWindow):
         if self.app_state.csv_signature:
             return self.app_state.csv_signature
         return tr("Keine Datei gewählt")
+
+    def _enable_banking_ready(self) -> bool:
+        eb_config = self.app_state.config.get("enable_banking") or {}
+        return bool(eb_config.get("application_id")) and get_effective_enable_banking_key_path(self.app_state.config).exists()
 
     # ------------------------------------------------------------------
     # Hauptbereich
@@ -1570,54 +1524,44 @@ class DesktopAppQt(QMainWindow):
             message += "\n" + tr("{duplicates} bereits vorhandene Buchung(en) übersprungen (Duplikat).", duplicates=duplicates)
         QMessageBox.information(self, tr("Import abgeschlossen"), message)
 
+    def _default_bank_import_range(self) -> tuple[date, date]:
+        """Vorbelegung fuer EnableBankingDateRangeDialog: erster/letzter Tag
+        des aktuell in der Sidebar gewaehlten Monats (AppState.
+        selected_month, Format 'YYYY-MM') - ohne Auswahl (z.B. vor dem
+        ersten CSV-Import) faellt das auf den echten aktuellen
+        Kalendermonat zurueck."""
+        if self.app_state.selected_month:
+            year, month = (int(p) for p in self.app_state.selected_month.split("-"))
+        else:
+            today = date.today()
+            year, month = today.year, today.month
+        return date(year, month, 1), _last_day_of_month(year, month)
+
     def _on_bank_import_click(self):
-        """Persoenliche, nicht-oeffentliche Erweiterung - siehe Import am
-        Dateianfang. Ablauf: Application ID einmalig abfragen (danach ueber
-        secrets_manager gemerkt), Land + Bank wählen (durchsuchbare Liste,
-        letzte Auswahl vorbelegt), dann Bank-Login im Browser oeffnen
-        (enable_banking_client.open_authorization) - die registrierte
-        REDIRECT_URL zeigt auf einen entfernten, selbst betriebenen Server
-        (nicht localhost), der Autorisierungs-Code kann von hier aus also
-        NICHT automatisch abgefangen werden. Der Nutzer fuegt nach dem
-        Login die komplette Ziel-URL ein, der Code wird daraus automatisch
-        herausgelesen (siehe extract_code_from_input)."""
-        from paperless_sync.core import secrets_manager
-        from paperless_sync.core.enable_banking_client import (
-            EnableBankingClient,
-            EnableBankingError,
-            REDIRECT_URL,
-            open_authorization,
-            extract_code_from_input,
-            load_last_selection,
-            save_last_selection,
-        )
+        """Ablauf: Zeitraum waehlen (vorbelegt mit dem aktuell gewaehlten
+        Monat) - Land + Bank waehlen - automatischer Autorisierungs-Flow
+        im Hintergrund-Thread (lokaler HTTP-Listener + redirectmeto.com,
+        siehe enable_banking_client.authorize - blockiert bis zu 5 Minuten,
+        daher Thread statt Direktaufruf) - Konto waehlen - Kontobewegungen
+        abrufen und in die reguläre Matching-Pipeline uebernehmen."""
+        eb_config = self.app_state.config.get("enable_banking") or {}
+        application_id = eb_config.get("application_id")
+        key_path = get_effective_enable_banking_key_path(self.app_state.config)
+        redirect_url = eb_config.get("redirect_url") or ""
 
-        application_id = secrets_manager.get_secret(self.app_state.base_dir, "enable_banking_application_id")
-        if not application_id:
-            application_id, ok = QInputDialog.getText(
-                self, tr("Enable Banking"), tr("Application ID (einmalig, wird sicher gespeichert):")
-            )
-            if not ok or not application_id.strip():
-                return
-            application_id = application_id.strip()
-            try:
-                secrets_manager.set_secret(self.app_state.base_dir, "enable_banking_application_id", application_id)
-            except secrets_manager.SecretsLockedError:
-                QMessageBox.warning(
-                    self, tr("Gesperrt"), tr("Zugangsdaten sind gerade gesperrt (Passphrase nötig).")
-                )
-                return
+        default_from, default_to = self._default_bank_import_range()
+        range_dialog = EnableBankingDateRangeDialog(self, default_from, default_to)
+        if range_dialog.exec() != QDialog.Accepted:
+            return
+        self._bank_import_date_from, self._bank_import_date_to = range_dialog.selected_range()
 
-        last = load_last_selection()
-        country, ok = QInputDialog.getText(
-            self, tr("Land"), tr("Ländercode (z.B. AT, DE):"), text=last.get("country", "")
-        )
+        country, ok = QInputDialog.getText(self, tr("Land"), tr("Ländercode (z.B. AT, DE):"))
         if not ok or not country.strip():
             return
         country = country.strip().upper()
 
         try:
-            client = EnableBankingClient(application_id=application_id)
+            client = EnableBankingClient(application_id=application_id, key_path=key_path)
             aspsps = client.get_aspsps(country)
         except EnableBankingError as exc:
             QMessageBox.critical(self, tr("Fehler"), str(exc))
@@ -1630,57 +1574,37 @@ class DesktopAppQt(QMainWindow):
             return
 
         names = [a.get("name", "?") for a in aspsps]
-        preselect = last.get("aspsp_name") if last.get("country") == country else None
-        picker = SearchableListDialog(self, tr("Bank wählen"), names, preselect=preselect)
+        picker = SearchableListDialog(self, tr("Bank wählen"), names)
         if picker.exec() != QDialog.Accepted:
             return
         bank_name = picker.selected_item()
         if not bank_name:
             return
-        save_last_selection(country, bank_name)
-
-        try:
-            open_authorization(client, bank_name, country)
-        except EnableBankingError as exc:
-            QMessageBox.critical(self, tr("Fehler"), str(exc))
-            return
-
-        pasted, ok = QInputDialog.getText(
-            self,
-            tr("Autorisierungs-Code"),
-            tr(
-                "Der Standard-Browser hat sich für den Bank-Login geöffnet. Nach erfolgreichem Login "
-                "wirst du auf {url} weitergeleitet - die komplette Ziel-URL hier einfügen (der Code "
-                "wird automatisch herausgelesen):",
-                url=REDIRECT_URL,
-            ),
-        )
-        if not ok or not pasted.strip():
-            return
-        code = extract_code_from_input(pasted)
-        if not code:
-            QMessageBox.warning(self, tr("Fehler"), tr("Kein Autorisierungs-Code in der Eingabe gefunden."))
-            return
-
-        try:
-            session = client.create_session(code)
-        except EnableBankingError as exc:
-            QMessageBox.critical(self, tr("Fehler"), str(exc))
-            return
 
         self._bank_import_client = client
-        self._on_bank_auth_finished(session, None)
+        if self.bank_import_btn:
+            self.bank_import_btn.setEnabled(False)
+            self.bank_import_btn.setText(f"⏳  {tr('Warte auf Bank-Login...')}")
+        self._bank_thread = QThread()
+        self._bank_worker = _EnableBankingAuthWorker(client, bank_name, country, redirect_url)
+        self._bank_worker.moveToThread(self._bank_thread)
+        self._bank_thread.started.connect(self._bank_worker.run)
+        self._bank_worker.finished.connect(self._on_bank_auth_finished)
+        self._bank_worker.finished.connect(self._bank_thread.quit)
+        self._bank_thread.finished.connect(self._bank_thread.deleteLater)
+        self._bank_thread.start()
 
     def _on_bank_auth_finished(self, session, error):
-        """Persoenliche, nicht-oeffentliche Erweiterung - siehe
-        _on_bank_import_click. Konto wählen, Buchungen abrufen und direkt
-        in die Matching-Pipeline uebernehmen (render() danach zeigt sie wie
-        gewohnt an - kein separater Vorschau-Bestaetigungsschritt mehr,
-        siehe Chat)."""
+        """Konto waehlen, Buchungen abrufen und direkt in die Matching-
+        Pipeline uebernehmen (render() danach zeigt sie wie gewohnt an)."""
+        if self.bank_import_btn:
+            self.bank_import_btn.setEnabled(True)
+            self.bank_import_btn.setText(tr("Von Bank importieren"))
+
         if error:
             QMessageBox.critical(self, tr("Autorisierung fehlgeschlagen"), error)
             return
-        accounts = session.get("accounts") or []
+        accounts = (session or {}).get("accounts") or []
         if not accounts:
             QMessageBox.information(self, tr("Keine Konten"), tr("Keine autorisierten Konten in der Session gefunden."))
             return
@@ -1690,20 +1614,19 @@ class DesktopAppQt(QMainWindow):
         if not ok:
             return
 
-        from datetime import date as _date
-
-        from paperless_sync.core.enable_banking_client import (
-            EnableBankingError,
-            transactions_to_dataframe,
-            ENABLE_BANKING_MAPPING,
-        )
-
         try:
-            # Testweise bis 01.2024 zurueck (siehe Chat) - Standard ohne
-            # date_from ist offenbar deutlich kuerzer (nur 2026 kam zurueck).
-            raw_txs = self._bank_import_client.get_transactions(account_uid, date_from=_date(2024, 1, 1))
+            raw_txs = self._bank_import_client.get_transactions(
+                account_uid, date_from=self._bank_import_date_from, date_to=self._bank_import_date_to
+            )
         except EnableBankingError as exc:
-            QMessageBox.critical(self, tr("Fehler"), str(exc))
+            # Manche Banken stellen ueber die Schnittstelle nur eine
+            # begrenzte Historie bereit (haeufig ~90 Tage), unabhaengig vom
+            # angefragten Zeitraum - das kann sich als API-Fehler aeussern,
+            # daher der Hinweis statt eines rohen Fehlertexts.
+            QMessageBox.critical(
+                self, tr("Fehler"),
+                f"{exc}\n\n{tr('Diese Bank stellt evtl. nur einen kürzeren Zeitraum bereit als angefragt.')}",
+            )
             return
 
         if not raw_txs:
@@ -1712,6 +1635,11 @@ class DesktopAppQt(QMainWindow):
 
         df = transactions_to_dataframe(raw_txs)
         added, duplicates = self.controller.on_external_import(df, ENABLE_BANKING_MAPPING)
+
+        eb_config = self.app_state.config.setdefault("enable_banking", {})
+        eb_config["last_import_at"] = datetime.now().isoformat()
+        self.app_state.save_config()
+
         self.render()
         self._show_import_result(added, duplicates)
 
