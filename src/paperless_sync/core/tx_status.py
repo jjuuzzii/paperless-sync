@@ -36,11 +36,11 @@ DONE_STATUSES = (TxStatus.MATCHED, TxStatus.TAGGED)
 
 LABELS_DE = {
     TxStatus.MATCHED: "Beleg zugeordnet",
-    TxStatus.TAGGED: "Kein Beleg noetig",
+    TxStatus.TAGGED: "Kein Beleg nötig",
     TxStatus.UNRESOLVED: "Offen",
-    TxStatus.MULTI_MATCH: "Mehrere Kandidaten - Auswahl noetig",
-    TxStatus.DUPLICATE_SUSPECT: "Moeglicher Duplikat-Fall",
-    TxStatus.SPLIT_PAYMENT: "Moegliche Teilzahlung",
+    TxStatus.MULTI_MATCH: "Mehrere Kandidaten - Auswahl nötig",
+    TxStatus.DUPLICATE_SUSPECT: "Möglicher Duplikat-Fall",
+    TxStatus.SPLIT_PAYMENT: "Mögliche Teilzahlung",
 }
 
 

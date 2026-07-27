@@ -19,20 +19,54 @@ import csv
 import io
 import re
 import zipfile
+from datetime import date as date_cls
 from pathlib import Path
 
-from .tx_status import TxStatus, OPEN_STATUSES, label_de
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from .tx_status import TxStatus, OPEN_STATUSES, LABELS_DE, label_de
 
 _MONTH_NAMES_DE = {
     1: "Januar", 2: "Februar", 3: "Maerz", 4: "April", 5: "Mai", 6: "Juni",
     7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
 }
+# Deutsche Monatsnamen MIT Umlaut fuer PDF-/Textanzeige - anders als
+# _MONTH_NAMES_DE (ASCII-transliteriert fuer Dateinamen, siehe dort).
+_MONTH_NAMES_DISPLAY = {
+    1: "Januar", 2: "Februar", 3: "März", 4: "April", 5: "Mai", 6: "Juni",
+    7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
+}
+# Kehrt tx_status.LABELS_DE um (deutscher Anzeige-Text -> TxStatus) - fuer
+# die Jahresauswertung (00_Offene_Posten_Jahr.csv/00_Jahresuebersicht.pdf),
+# die bewusst die bereits geschriebene 00_Jahresuebersicht.csv zurueckliest
+# (siehe dortigen Docstring) statt Status ein zweites Mal aus den
+# Transaktionen zu berechnen - dort steht nur noch der Anzeige-Text, dieser
+# Rueckweg macht ihn wieder maschinenlesbar (fuer Zaehlung/Einfaerbung).
+_LABEL_TO_STATUS = {label: status for status, label in LABELS_DE.items()}
 
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _IBAN_RE = re.compile(r"IBAN:?\s*[A-Z]{2}\d{2}[A-Z0-9]{10,30}", re.IGNORECASE)
 _BIC_RE = re.compile(r"BIC:?\s*[A-Z0-9]{8,11}", re.IGNORECASE)
 
 RECIPIENT_MAX_LENGTH = 40
+
+# Helle Hintergrundfarben je offenem Status fuer die PDF-Zusammenfassung -
+# selber Farbcode-Sinn wie die Qt-UI-Badges (STATUS_BADGES in
+# desktop_app_qt.py: amber/lila/tuerkis), hier als helle Tint-Variante,
+# die auf weissem PDF-Papier noch gut lesbar bleibt. UNRESOLVED hat dort
+# kein eigenes Badge (nur roter Rahmen) - hier trotzdem ein helles Rot,
+# damit es sich in der Zusammenfassungstabelle sichtbar von den anderen
+# drei abhebt.
+_STATUS_COLORS_PDF = {
+    TxStatus.UNRESOLVED: colors.HexColor("#f8d7da"),
+    TxStatus.MULTI_MATCH: colors.HexColor("#ffe8b3"),
+    TxStatus.DUPLICATE_SUSPECT: colors.HexColor("#e2d4f7"),
+    TxStatus.SPLIT_PAYMENT: colors.HexColor("#c9f2e8"),
+}
 
 
 def month_folder_name(month_str: str) -> str:
@@ -301,6 +335,15 @@ def fiscal_year_folder_name(start_year: int, fiscal_config: dict) -> str:
     return f"Jahresexport_{start_year}-{start_year + 1}"
 
 
+def fiscal_year_label(start_year: int, fiscal_config: dict) -> str:
+    """Anzeige-Text des Geschaeftsjahres fuer UI/PDF-Titel ('2026' bzw.
+    '2025/2026') - siehe fiscal_year_folder_name fuer die
+    Dateisystem-Variante mit Unterstrich/Bindestrich statt Schraegstrich."""
+    if fiscal_config.get("calendar_year", True):
+        return str(start_year)
+    return f"{start_year}/{start_year + 1}"
+
+
 def export_fiscal_year(
     export_base_dir: Path,
     start_year: int,
@@ -309,6 +352,8 @@ def export_fiscal_year(
     csv_df,
     csv_delimiter: str,
     client,
+    company_name: str = "",
+    logo_path: Path | None = None,
 ) -> Path:
     """Baut den kompletten Jahresexport: ruft generate_export() fuer jeden
     der 12 Monate des Geschaeftsjahres frisch aus transactions auf (siehe
@@ -324,9 +369,16 @@ def export_fiscal_year(
     (z.B. '2025-07_Juli' < '2025-12_Dezember' < '2026-01_Januar' <
     '2026-06_Juni') - keine zusaetzliche Umbenennung/Nummerierung noetig.
 
-    Prueft NICHT selbst auf offene Posten - das ist Aufgabe der aufrufenden
-    UI-Schicht (siehe generate_export-Docstring fuer denselben Grundsatz
-    auf Monatsebene, sowie die geplante jahresweite Vorab-Warnung)."""
+    Erzeugt danach drei Jahres-Zusammenfassungen im Wurzelordner -
+    00_Jahresuebersicht.csv (ALLE Buchungen), 00_Offene_Posten_Jahr.csv
+    (NUR Klaerungsbedarf) und 00_Jahresuebersicht.pdf (Deckblatt +
+    offene-Posten-Zusammenfassung zuerst + vollstaendige Monatsliste) -
+    company_name/logo_path nur fuers PDF-Deckblatt, sonst ungenutzt.
+
+    Prueft NICHT selbst auf offene Posten, verweigert den Export nie - das
+    ist Aufgabe der aufrufenden UI-Schicht (siehe generate_export-Docstring
+    fuer denselben Grundsatz auf Monatsebene, sowie die geplante
+    jahresweite Vorab-Warnung)."""
     year_root = Path(export_base_dir) / fiscal_year_folder_name(start_year, fiscal_config)
     year_root.mkdir(parents=True, exist_ok=True)
 
@@ -336,6 +388,14 @@ def export_fiscal_year(
 
     (year_root / "00_Jahresuebersicht.csv").write_bytes(
         _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter)
+    )
+    (year_root / "00_Offene_Posten_Jahr.csv").write_bytes(
+        _build_offene_posten_jahr_csv(year_root, month_strs, csv_delimiter)
+    )
+    (year_root / "00_Jahresuebersicht.pdf").write_bytes(
+        _build_jahresuebersicht_pdf(
+            year_root, month_strs, fiscal_year_label(start_year, fiscal_config), csv_delimiter, company_name, logo_path
+        )
     )
 
     return year_root
@@ -367,6 +427,183 @@ def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_deli
         for row in rows[1:]:  # Kopfzeile ueberspringen
             writer.writerow([month_str, folder_name] + row)
     return buf.getvalue().encode("utf-8-sig")
+
+
+def _read_jahresuebersicht_rows(year_root: Path, csv_delimiter: str) -> list[list[str]]:
+    """Liest die bereits geschriebene 00_Jahresuebersicht.csv zurueck (ohne
+    Kopfzeile) - gemeinsame Grundlage fuer _build_offene_posten_jahr_csv
+    und _build_jahresuebersicht_pdf, damit beide garantiert dieselben Daten
+    zeigen wie die CSV selbst. Spalten (siehe _build_jahresuebersicht_csv):
+    [0] Monat, [1] Relativer Pfad zum Monatsordner, [2] Datum, [3] Betrag,
+    [4] Verwendungszweck, [5] Zugeordneter Beleg (relativer Pfad),
+    [6] Status, [7] Tag."""
+    text = (year_root / "00_Jahresuebersicht.csv").read_bytes().decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))[1:]
+
+
+def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_delimiter: str) -> bytes:
+    """00_Offene_Posten_Jahr.csv - NUR die Buchungen des gesamten
+    Geschaeftsjahres mit Klaerungsbedarf (siehe tx_status.OPEN_STATUSES),
+    mit einem Kopfblock (Anzahl offener Posten je Monat/Status-Typ ganz
+    oben, Format 'Monat JJJJ: N status_a, N status_b' bzw. '... : 0 offene
+    Posten'), damit auf einen Blick erkennbar ist, wo noch Klaerungsbedarf
+    besteht, ohne die Detailzeilen lesen zu muessen. MUSS NACH
+    00_Jahresuebersicht.csv aufgerufen werden (siehe export_fiscal_year) -
+    liest diese zurueck statt Status ein zweites Mal zu berechnen."""
+    rows = _read_jahresuebersicht_rows(year_root, csv_delimiter)
+    open_rows_by_month: dict[str, list[list[str]]] = {m: [] for m in month_strs}
+    for row in rows:
+        status = _LABEL_TO_STATUS.get(row[6])
+        if status in OPEN_STATUSES:
+            open_rows_by_month.setdefault(row[0], []).append(row)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
+
+    writer.writerow(["Zusammenfassung offene Posten pro Monat"])
+    for month_str in month_strs:
+        month_rows = open_rows_by_month.get(month_str, [])
+        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
+        if not month_rows:
+            writer.writerow([f"{month_label}: 0 offene Posten"])
+            continue
+        counts: dict[str, int] = {}
+        for row in month_rows:
+            status = _LABEL_TO_STATUS.get(row[6])
+            key = status.value if status else row[6]
+            counts[key] = counts.get(key, 0) + 1
+        parts = ", ".join(f"{n} {key}" for key, n in counts.items())
+        writer.writerow([f"{month_label}: {parts}"])
+    writer.writerow([])
+
+    writer.writerow(["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    for month_str in month_strs:
+        for row in open_rows_by_month.get(month_str, []):
+            writer.writerow([row[0], row[2], row[3], row[4], row[6]])
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def _pdf_cell(text, style) -> Paragraph:
+    from xml.sax.saxutils import escape
+    return Paragraph(escape(str(text)), style)
+
+
+def _build_jahresuebersicht_pdf(
+    year_root: Path,
+    month_strs: list[str],
+    year_label: str,
+    csv_delimiter: str,
+    company_name: str,
+    logo_path: Path | None,
+) -> bytes:
+    """00_Jahresuebersicht.pdf: Deckblatt (Firmenname/Logo, Geschaeftsjahr,
+    Erstellungsdatum), danach eine Zusammenfassungsseite mit
+    AUSSCHLIESSLICH den offenen Posten des Jahres (Anforderung 5 - die
+    muessen zuerst kommen, nicht in der grossen Gesamtliste versteckt
+    sein), farblich nach Status markiert, mit einer Anzahl-pro-Monat/
+    Status-Zusammenfassung davor. Erst danach die vollstaendige
+    Jahresliste, gruppiert nach Monat mit Seitenumbruch dazwischen. Liest
+    wie _build_offene_posten_jahr_csv die bereits geschriebene
+    00_Jahresuebersicht.csv zurueck, damit alle drei Jahres-
+    Zusammenfassungen (CSV/Offene-Posten-CSV/PDF) garantiert dieselben
+    Daten zeigen. MUSS NACH 00_Jahresuebersicht.csv aufgerufen werden."""
+    rows = _read_jahresuebersicht_rows(year_root, csv_delimiter)
+    rows_by_month: dict[str, list[list[str]]] = {m: [] for m in month_strs}
+    for row in rows:
+        rows_by_month.setdefault(row[0], []).append(row)
+
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle("cell", parent=styles["Normal"], fontSize=7, leading=9)
+    header_style = ParagraphStyle("header", parent=cell_style, textColor=colors.white, fontName="Helvetica-Bold")
+
+    def _table(header: list[str], data_rows: list[list[str]], row_colors: list | None = None) -> Table:
+        table_data = [[_pdf_cell(h, header_style) for h in header]]
+        for r in data_rows:
+            table_data.append([_pdf_cell(c, cell_style) for c in r])
+        tbl = Table(table_data, repeatRows=1)
+        style_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]
+        if row_colors:
+            for i, color in enumerate(row_colors, start=1):
+                if color is not None:
+                    style_cmds.append(("BACKGROUND", (0, i), (-1, i), color))
+        tbl.setStyle(TableStyle(style_cmds))
+        return tbl
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=1.5 * cm, rightMargin=1.5 * cm
+    )
+    story = []
+
+    # --- Deckblatt -----------------------------------------------------
+    if logo_path is not None:
+        logo_path = Path(logo_path)
+        if logo_path.exists():
+            try:
+                story.append(Image(str(logo_path), width=2.5 * cm, height=2.5 * cm))
+                story.append(Spacer(1, 1 * cm))
+            except Exception:
+                pass  # kaputte/nicht lesbare Logo-Datei soll den Export nicht verhindern
+    if company_name:
+        story.append(Paragraph(company_name, styles["Title"]))
+    story.append(Paragraph(f"Jahresübersicht {year_label}", styles["Heading1"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph(f"Erstellt am {date_cls.today().strftime('%d.%m.%Y')}", styles["Normal"]))
+    story.append(PageBreak())
+
+    # --- Zusammenfassungsseite: NUR offene Posten, zuerst -----------------
+    story.append(Paragraph("Offene Posten", styles["Heading1"]))
+    story.append(Spacer(1, 0.2 * cm))
+
+    open_rows_by_month: dict[str, list[list[str]]] = {
+        month_str: [r for r in rows_by_month.get(month_str, []) if _LABEL_TO_STATUS.get(r[6]) in OPEN_STATUSES]
+        for month_str in month_strs
+    }
+
+    for month_str in month_strs:
+        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
+        open_rows = open_rows_by_month[month_str]
+        if not open_rows:
+            story.append(Paragraph(f"{month_label}: 0 offene Posten", styles["Normal"]))
+            continue
+        counts: dict[str, int] = {}
+        for row in open_rows:
+            status = _LABEL_TO_STATUS.get(row[6])
+            key = status.value if status else row[6]
+            counts[key] = counts.get(key, 0) + 1
+        parts = ", ".join(f"{n} {key}" for key, n in counts.items())
+        story.append(Paragraph(f"{month_label}: {parts}", styles["Normal"]))
+    story.append(Spacer(1, 0.5 * cm))
+
+    all_open_rows = [row for month_str in month_strs for row in open_rows_by_month[month_str]]
+    if all_open_rows:
+        row_colors = [_STATUS_COLORS_PDF.get(_LABEL_TO_STATUS.get(row[6])) for row in all_open_rows]
+        detail_rows = [[row[0], row[2], row[3], row[4], row[6]] for row in all_open_rows]
+        story.append(_table(["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"], detail_rows, row_colors))
+    else:
+        story.append(Paragraph("Keine offenen Posten im gesamten Geschäftsjahr.", styles["Normal"]))
+    story.append(PageBreak())
+
+    # --- Vollstaendige Jahresliste, gruppiert nach Monat -------------------
+    for idx, month_str in enumerate(month_strs):
+        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
+        story.append(Paragraph(month_label, styles["Heading2"]))
+        story.append(Spacer(1, 0.2 * cm))
+        month_rows = rows_by_month.get(month_str, [])
+        if not month_rows:
+            story.append(Paragraph("Keine Buchungen in diesem Monat.", styles["Normal"]))
+        else:
+            detail_rows = [[row[2], row[3], row[4], row[5], row[6], row[7], row[0]] for row in month_rows]
+            story.append(_table(["Datum", "Betrag", "Verwendungszweck", "Beleg", "Status", "Tag", "Monat"], detail_rows))
+        if idx < len(month_strs) - 1:
+            story.append(PageBreak())
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 def zip_export_folder(folder: Path) -> bytes:

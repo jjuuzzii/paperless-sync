@@ -19,8 +19,10 @@ from paperless_sync.core.exporter import (
     _build_einzahlungen_csv,
     _build_getaggte_ohne_beleg_csv,
     _build_jahresuebersicht_csv,
+    _build_jahresuebersicht_pdf,
     _build_kontoauszug_csv,
     _build_offene_posten_csv,
+    _build_offene_posten_jahr_csv,
     _build_uebersicht_csv,
     _dedupe_filename,
     _export_receipts,
@@ -31,6 +33,7 @@ from paperless_sync.core.exporter import (
     count_open_items,
     export_fiscal_year,
     fiscal_year_folder_name,
+    fiscal_year_label,
     generate_export,
     get_fiscal_year_months,
     month_folder_name,
@@ -470,3 +473,121 @@ def test_export_fiscal_year_writes_jahresuebersicht_with_all_transactions(tmp_pa
     jan_row = next(row for row in rows[1:] if row[4] == "Jan")
     month_folder, beleg_pfad = jan_row[1], jan_row[5]
     assert (year_root / month_folder / beleg_pfad).exists()
+
+
+# --- fiscal_year_label -------------------------------------------------------
+
+def test_fiscal_year_label_calendar_year():
+    assert fiscal_year_label(2026, {"calendar_year": True}) == "2026"
+
+
+def test_fiscal_year_label_deviating_fiscal_year():
+    assert fiscal_year_label(2025, {"calendar_year": False, "start_month": 7}) == "2025/2026"
+
+
+# --- 00_Offene_Posten_Jahr.csv -----------------------------------------------
+
+def _build_year_root_with_jahresuebersicht(tmp_path, month_transactions: dict[str, list[dict]]) -> Path:
+    """Testhilfe: baut fuer jeden Monat generate_export() + danach die
+    00_Jahresuebersicht.csv - Vorbedingung fuer _build_offene_posten_jahr_csv/
+    _build_jahresuebersicht_pdf, die beide darauf aufbauen."""
+    year_root = tmp_path / "Jahresexport_2026"
+    year_root.mkdir(parents=True, exist_ok=True)
+    for month_str, txs in month_transactions.items():
+        generate_export(year_root, month_str, txs, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+    month_strs = get_fiscal_year_months(2026, {"calendar_year": True})
+    (year_root / "00_Jahresuebersicht.csv").write_bytes(_build_jahresuebersicht_csv(year_root, month_strs, ";"))
+    return year_root, month_strs
+
+
+def test_build_offene_posten_jahr_csv_only_open_items_with_month_summary(tmp_path):
+    month_transactions = {
+        "2026-02": [make_transaction(id_="001", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None)],
+        "2026-03": [
+            make_transaction(id_="002", date_=date(2026, 3, 15), status=TxStatus.MULTI_MATCH, row_index=None),
+            make_transaction(id_="003", date_=date(2026, 3, 20), status=TxStatus.DUPLICATE_SUSPECT, row_index=None),
+            make_transaction(id_="004", date_=date(2026, 3, 25), status=TxStatus.MATCHED, row_index=None),  # nicht offen
+        ],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    csv_bytes = _build_offene_posten_jahr_csv(year_root, month_strs, ";")
+    rows = _rows(csv_bytes)
+
+    assert rows[0] == ["Zusammenfassung offene Posten pro Monat"]
+    month_summary_lines = [r[0] for r in rows[1:13]]  # genau 12 Monatszeilen, siehe month_strs
+    assert "Februar 2026: 1 unresolved" in month_summary_lines
+    assert "März 2026: 1 multi_match, 1 duplicate_suspect" in month_summary_lines
+    assert "Januar 2026: 0 offene Posten" in month_summary_lines
+
+    detail_header_idx = next(i for i, r in enumerate(rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    detail_rows = rows[detail_header_idx + 1:]
+    assert len(detail_rows) == 3  # nur die drei offenen, MATCHED fehlt
+    assert all(row[0] in ("2026-02", "2026-03") for row in detail_rows)
+
+
+def test_build_offene_posten_jahr_csv_empty_when_everything_resolved(tmp_path):
+    month_transactions = {
+        "2026-01": [make_transaction(id_="001", date_=date(2026, 1, 10), status=TxStatus.MATCHED, row_index=None)],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    csv_bytes = _build_offene_posten_jahr_csv(year_root, month_strs, ";")
+    rows = _rows(csv_bytes)
+
+    month_summary_lines = [r[0] for r in rows[1:13]]
+    assert all("0 offene Posten" in line for line in month_summary_lines)
+    detail_header_idx = next(i for i, r in enumerate(rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    assert rows[detail_header_idx + 1:] == []
+
+
+# --- 00_Jahresuebersicht.pdf --------------------------------------------------
+
+def test_build_jahresuebersicht_pdf_produces_valid_pdf_with_open_items(tmp_path):
+    month_transactions = {
+        "2026-02": [make_transaction(id_="001", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None)],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    pdf_bytes = _build_jahresuebersicht_pdf(year_root, month_strs, "2026", ";", "Musterfirma GmbH", None)
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 1000
+
+
+def test_build_jahresuebersicht_pdf_handles_no_open_items(tmp_path):
+    month_transactions = {
+        "2026-01": [make_transaction(id_="001", date_=date(2026, 1, 10), status=TxStatus.MATCHED, row_index=None)],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    pdf_bytes = _build_jahresuebersicht_pdf(year_root, month_strs, "2026", ";", "", None)
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_build_jahresuebersicht_pdf_handles_missing_logo_gracefully(tmp_path):
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, {})
+    pdf_bytes = _build_jahresuebersicht_pdf(year_root, month_strs, "2026", ";", "Musterfirma GmbH", Path("does/not/exist.png"))
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+# --- export_fiscal_year: alle drei Jahres-Zusammenfassungen -----------------
+
+def test_export_fiscal_year_writes_all_three_summary_files(tmp_path):
+    transactions = [
+        make_transaction(id_="001", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None),
+        make_transaction(id_="002", date_=date(2026, 5, 5), status=TxStatus.MATCHED, row_index=None),
+    ]
+    year_root = export_fiscal_year(
+        tmp_path, 2026, {"calendar_year": True}, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";",
+        FakePaperlessClient(), company_name="Musterfirma GmbH", logo_path=None,
+    )
+
+    assert (year_root / "00_Jahresuebersicht.csv").exists()
+    assert (year_root / "00_Offene_Posten_Jahr.csv").exists()
+    pdf_bytes = (year_root / "00_Jahresuebersicht.pdf").read_bytes()
+    assert pdf_bytes.startswith(b"%PDF")
+
+    offene_rows = _rows((year_root / "00_Offene_Posten_Jahr.csv").read_bytes())
+    detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    detail_rows = offene_rows[detail_header_idx + 1:]
+    assert len(detail_rows) == 1  # nur die UNRESOLVED-Buchung, nicht die MATCHED
