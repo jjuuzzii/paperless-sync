@@ -894,12 +894,11 @@ class DesktopAppQt(QMainWindow):
             chip_layout.addWidget(remove_btn)
             row.addWidget(chip)
 
-        add_btn = QPushButton(f"+ {tr('Beleg')}")
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: {COLORS['blue']}; border: none; font-size: 8pt; }}"
-            f"QPushButton:hover {{ color: #4a76d6; }}"
-        )
+        # Richtiger Button statt Textlink (siehe CLAUDE.md/UI-Prompt Punkt 5) -
+        # Mehrfach-Beleg-Zuordnung (z.B. Amazon-Sammelabbuchung mit mehreren
+        # Einzelrechnungen) ist ein Kernfeature, verdient also mehr Gewicht
+        # als ein unauffaelliger Link.
+        add_btn = _outline_button(f"➕  {tr('Beleg')}", COLORS["blue"])
         add_btn.clicked.connect(lambda _=False, t=tx: self._on_pick_existing_doc(t))
         row.addWidget(add_btn)
         row.addStretch()
