@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 
 from dateutil import parser as dateparser
 
-from .csv_utils import parse_amount, parse_date
+from .csv_utils import detect_currency_marker, parse_amount, parse_amount_with_format, parse_date, parse_date_with_format
 from .match_candidate import MatchCandidate, MatchReasonType
 from .tx_status import TxStatus
 
@@ -89,16 +89,35 @@ def build_transactions(df, mapping: dict) -> list[dict]:
     """Baut aus dem CSV-DataFrame die Transaktionsliste: chronologisch
     sortiert, mit fortlaufender dreistelliger ID. Einnahmen (positive
     Betraege) und Ausgaben (negative Betraege) werden beide beruecksichtigt;
-    fuer den Betragsvergleich wird zusaetzlich der Absolutwert gefuehrt."""
+    fuer den Betragsvergleich wird zusaetzlich der Absolutwert gefuehrt.
+
+    mapping kennt optional date_order/date_separator/
+    amount_decimal_separator/amount_thousands_separator (siehe
+    csv_utils.detect_date_column_format/detect_amount_column_format) - sind
+    sie gesetzt, wird deterministisch statt geraten geparst. Fehlen sie
+    (aeltere gespeicherte Mappings, Enable-Banking-Import), faellt diese
+    Funktion unveraendert auf parse_date()/parse_amount() zurueck - kein
+    Verhaltensbruch fuer Bestandsnutzer."""
     date_col = mapping.get("date_column")
     amount_col = mapping.get("amount_column")
     purpose_col = mapping.get("purpose_column")
     counterparty_col = mapping.get("counterparty_column")  # optional, z.B. "Name Zahlungsbeteiligter"
+    date_order = mapping.get("date_order")
+    date_separator = mapping.get("date_separator")
+    amount_decimal_separator = mapping.get("amount_decimal_separator")
+    amount_thousands_separator = mapping.get("amount_thousands_separator")
 
     records = []
     for row_index, row in df.iterrows():
-        date_val = parse_date(row.get(date_col))
-        amount_val = parse_amount(row.get(amount_col))
+        raw_amount = row.get(amount_col)
+        if date_order:
+            date_val = parse_date_with_format(row.get(date_col), date_order, date_separator)
+        else:
+            date_val = parse_date(row.get(date_col))
+        if amount_decimal_separator:
+            amount_val = parse_amount_with_format(raw_amount, amount_decimal_separator, amount_thousands_separator)
+        else:
+            amount_val = parse_amount(raw_amount)
         purpose_val = str(row.get(purpose_col, "")).strip()
         counterparty_val = str(row.get(counterparty_col, "")).strip() if counterparty_col else ""
         if date_val is None or amount_val is None:
@@ -111,6 +130,7 @@ def build_transactions(df, mapping: dict) -> list[dict]:
                 "purpose": purpose_val,
                 "counterparty": counterparty_val,
                 "row_index": row_index,  # Original-CSV-Zeile, fuer den gefilterten Export
+                "foreign_currency": detect_currency_marker(raw_amount),  # None im Normalfall (EUR)
             }
         )
 
@@ -126,6 +146,21 @@ def build_transactions(df, mapping: dict) -> list[dict]:
 
     renumber_transactions(records)
     return records
+
+
+def collect_foreign_currency_warnings(transactions: list[dict]) -> list[str]:
+    """Nach build_transactions() aufrufbar - liefert deutschsprachige
+    Warnungen fuer alle Buchungen mit erkannter Fremdwaehrung (siehe
+    csv_utils.detect_currency_marker), z.B. fuer eine Banner-Anzeige nach
+    dem Import. Aendert build_transactions()' Rueckgabetyp bewusst nicht -
+    die drei bestehenden Aufrufstellen in desktop_controller.py blieben
+    sonst kaputt."""
+    return [
+        f"Zeile {t.get('row_index')}: Fremdwaehrung {t['foreign_currency']} erkannt (Rohbetrag {t['amount_raw']:.2f}) - "
+        f"bitte pruefen, der Betrag wurde evtl. falsch interpretiert"
+        for t in transactions
+        if t.get("foreign_currency")
+    ]
 
 
 def renumber_transactions(transactions: list[dict]) -> None:

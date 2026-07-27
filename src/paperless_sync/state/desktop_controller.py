@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from paperless_sync.core.csv_utils import read_csv_raw
+from paperless_sync.core.csv_utils import read_csv_raw, profile_columns
 from paperless_sync.core.matcher import (
     build_transactions,
     renumber_transactions,
@@ -118,7 +118,12 @@ class Controller:
           Warnung, kein Blocker - die UI muss selbst entscheiden, ob trotzdem
           fortgefahren wird.
         - added/duplicates: nur gesetzt, wenn mapping_ready True ist (beim
-          manuellen Mapping-Weg liefert erst on_mapping_confirm() die Zahlen)."""
+          manuellen Mapping-Weg liefert erst on_mapping_confirm() die Zahlen)
+        - column_profiles: nur gesetzt, wenn mapping_ready False ist - je
+          Spalte Rollen-Vorschlag/Konfidenz/Format-Info/Werte-Vorschau
+          (siehe csv_utils.profile_columns), Datengrundlage fuer einen
+          kuenftigen Mapping-Dialog mit Vorschau-Tabelle und gezielter
+          Nachfrage bei mehrdeutigem Datumsformat."""
         state = self.state
         path = Path(filepath)
         raw_bytes = path.read_bytes()
@@ -164,7 +169,7 @@ class Controller:
 
         state.pending_mapping = {"date_column": None, "amount_column": None, "purpose_column": None}
         state.mapping_confirmed = False
-        return {"mapping_ready": False, "account_mismatch": account_mismatch}
+        return {"mapping_ready": False, "account_mismatch": account_mismatch, "column_profiles": profile_columns(df)}
 
     def on_mapping_confirm(
         self, date_column: str, amount_column: str, purpose_column: str, counterparty_column: str | None = None
