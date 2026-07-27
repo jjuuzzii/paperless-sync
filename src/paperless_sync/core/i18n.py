@@ -231,4 +231,99 @@ _EN: dict[str, str] = {
     "Abbrechen": "Cancel",
     "Verknüpfen": "Link",
     "  (bereits verknüpft)": "  (already linked)",
+
+    # --- EnableBankingSetupWizard -----------------------------------------
+    "Bank-Import einrichten": "Set up bank import",
+    "Schritt {current} von {total}": "Step {current} of {total}",
+    "Zurück": "Back",
+    "Weiter": "Next",
+    "Fertig": "Done",
+    "Kein Schlüssel gefunden": "No key found",
+    "Bitte zuerst die .pem-Datei in den angezeigten Ordner legen und 'Prüfen' klicken.":
+        "Please place the .pem file in the shown folder first and click 'Check'.",
+    "Application-ID fehlt": "Application ID missing",
+    "Bitte eine Application-ID eintragen.": "Please enter an Application ID.",
+    "Bank-Import über Enable Banking einrichten": "Set up bank import via Enable Banking",
+    "Enable Banking ist eine Open-Banking-Schnittstelle, über die Kontobewegungen direkt von deiner Bank "
+    "abgerufen werden können - als Alternative zum manuellen CSV-Export. Du registrierst dafür eine eigene, "
+    "kostenlose Anwendung mit eigenem Zugang. Die Einrichtung dauert ca. 5 Minuten und ist einmalig.":
+        "Enable Banking is an open banking interface that lets you fetch transactions directly from your "
+        "bank - as an alternative to manual CSV export. You register your own free application with your "
+        "own access. Setup takes about 5 minutes and is a one-time step.",
+    "enablebanking.com/sign-in öffnen": "Open enablebanking.com/sign-in",
+    "Anwendung registrieren": "Register application",
+    "Im Enable-Banking-Control-Panel unter 'Applications' auf 'Add a new application' klicken und folgende Werte eintragen:":
+        "In the Enable Banking control panel, under 'Applications', click 'Add a new application' and enter the following values:",
+    "Environment": "Environment",
+    "Redirect URL": "Redirect URL",
+    "Application Name": "Application Name",
+    "frei wählbar, z.B. 'Paperless Sync'": "free choice, e.g. 'Paperless Sync'",
+    "💡 Beim Anlegen wird automatisch ein privater Schlüssel als .pem-Datei heruntergeladen - Download-Fenster "
+    "offen lassen, wird im nächsten Schritt gebraucht.":
+        "💡 A private key is automatically downloaded as a .pem file when you create the application - leave "
+        "the download window open, you'll need it in the next step.",
+    "Kopieren": "Copy",
+    "Schlüssel ablegen": "Place key file",
+    "Verschiebe die heruntergeladene .pem-Datei in diesen Ordner.": "Move the downloaded .pem file into this folder.",
+    "Ordner öffnen": "Open folder",
+    "Prüfen": "Check",
+    "Schlüssel gefunden.": "Key found.",
+    "Noch keine .pem-Datei gefunden.": "No .pem file found yet.",
+    "Application-ID eintragen": "Enter Application ID",
+    "Zu finden im Enable-Banking-Control-Panel unter deiner Anwendung ('Application ID').":
+        "Found in the Enable Banking control panel under your application ('Application ID').",
+    "Eigenes Konto verknüpfen": "Link your own account",
+    "Im Enable-Banking-Control-Panel bei deiner Anwendung das eigene Konto whitelisten (im "
+    "'restricted production'-Modus ist dafür kein separater Vertrag nötig, solange die Anwendung nur von dir "
+    "selbst genutzt wird).":
+        "In the Enable Banking control panel, whitelist your own account for your application (in "
+        "'restricted production' mode this needs no separate contract as long as only you use the application).",
+    "Enable Banking Control Panel öffnen": "Open Enable Banking control panel",
+    "Testet den kompletten Ablauf einmal: Bank-Login im Browser, danach Abruf der letzten Kontobewegungen als Vorschau.":
+        "Tests the whole flow once: bank login in the browser, then fetches recent transactions as a preview.",
+    "Land:": "Country:",
+    "Warte auf Bank-Login...": "Waiting for bank login...",
+    "Verbindung erfolgreich!": "Connection successful!",
+    "(keine Buchungen im Standardzeitraum)": "(no transactions in the default period)",
+    "Mögliche Ursache: Application-ID falsch oder Konto noch nicht verknüpft.":
+        "Possible cause: wrong Application ID or account not linked yet.",
+
+    # --- EnableBankingDateRangeDialog --------------------------------------
+    "Zeitraum wählen": "Choose date range",
+    "Zeitraum für den Bank-Import": "Date range for the bank import",
+    "Aktueller Monat": "Current month",
+    "Letzte 30 Tage": "Last 30 days",
+    "Letzte 90 Tage": "Last 90 days",
+    "Von:": "From:",
+    "Bis:": "To:",
+    "Manche Banken begrenzen den abrufbaren Zeitraum, unabhängig von deiner Auswahl hier.":
+        "Some banks limit the retrievable period, regardless of your selection here.",
+    "Ungültiges Datum": "Invalid date",
+    "Bitte gültige Datumswerte im Format TT.MM.JJJJ eingeben.": "Please enter valid dates in DD.MM.YYYY format.",
+    "Ungültiger Zeitraum": "Invalid date range",
+    "Das Von-Datum muss vor dem Bis-Datum liegen.": "The from-date must be before the to-date.",
+
+    # --- Bank-Import-Button (Sidebar) --------------------------------------
+    "Von Bank importieren": "Import from bank",
+    "Öffnet den Bank-Login im Browser – bei jedem Import erneut nötig.":
+        "Opens the bank login in your browser - required again for every import.",
+
+    # --- SettingsDialog: Bank-Import-Sektion -------------------------------
+    "Bank-Import (Enable Banking)": "Bank import (Enable Banking)",
+    "Direkter Import von Kontobewegungen ueber deine eigene Enable-Banking-Anwendung, als Alternative zum manuellen CSV-Export.":
+        "Direct import of transactions via your own Enable Banking application, as an alternative to manual CSV export.",
+    "Application-ID hinterlegt": "Application ID on file",
+    "Schlüssel gefunden": "Key found",
+    "Letzter erfolgreicher Import": "Last successful import",
+    "noch nie": "never",
+    "Einrichtungsassistent starten": "Start setup wizard",
+    "Verbindung zurücksetzen": "Reset connection",
+    "Löscht Application-ID, Redirect-URL und Schlüssel-Pfad aus den Einstellungen. Die .pem-Datei selbst wird "
+    "NICHT automatisch gelöscht. Wirklich zurücksetzen?":
+        "Deletes the Application ID, redirect URL, and key path from the settings. The .pem file itself is "
+        "NOT deleted automatically. Really reset?",
+    "Application-ID ändern": "Change Application ID",
+    "Neue Application-ID:": "New Application ID:",
+    "Schlüssel-Pfad ändern": "Change key path",
+    "Schlüssel-Datei wählen": "Choose key file",
 }

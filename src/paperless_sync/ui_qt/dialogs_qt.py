@@ -2,10 +2,12 @@
 dialogs.py (CustomTkinter-Version). Wird schrittweise ausgebaut."""
 from __future__ import annotations
 
+import webbrowser
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QBuffer, QByteArray, QIODevice
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QBuffer, QByteArray, QIODevice, QThread, QObject, Signal, QUrl
+from PySide6.QtGui import QIcon, QDesktopServices
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -29,12 +31,26 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QAbstractItemView,
+    QStackedWidget,
 )
 
 from paperless_sync.core.backup import create_backup, restore_backup, backup_filename, WrongBackupPasswordError
 from paperless_sync.core.secrets_manager import SecretsLockedError
-from paperless_sync.core.config_manager import get_resource_dir, csv_signature as compute_csv_signature, PLACEHOLDER_TOKEN
+from paperless_sync.core.config_manager import (
+    get_resource_dir,
+    csv_signature as compute_csv_signature,
+    PLACEHOLDER_TOKEN,
+    get_effective_enable_banking_key_path,
+)
 from paperless_sync.core.paperless_client import PaperlessClient
+from paperless_sync.core.csv_utils import parse_date
+from paperless_sync.core.enable_banking_client import (
+    DEFAULT_REDIRECT_URL,
+    EnableBankingClient,
+    EnableBankingError,
+    authorize as enable_banking_authorize,
+    transactions_to_dataframe,
+)
 from .theme_qt import COLORS, font as qfont, NoScrollComboBox
 from paperless_sync.core.i18n import tr, set_language, get_language
 
@@ -78,6 +94,70 @@ def _small_x_button() -> QPushButton:
         f"QPushButton:hover {{ color: #ff6b6b; }}"
     )
     return btn
+
+
+class SearchableListDialog(QDialog):
+    """Durchsuchbare Auswahlliste - fuer sehr lange Listen (z.B. hunderte
+    Banken pro Land beim Enable-Banking-Import), bei denen
+    QInputDialog.getItem() unhandlich waere. Tippen filtert die Liste live;
+    generisch gehalten, auch fuer andere lange Auswahllisten wiederverwendbar.
+    Urspruenglich in desktop_app_qt.py, hierher verschoben, damit auch der
+    Enable-Banking-Einrichtungsassistent (EnableBankingSetupWizard, dieselbe
+    Datei) sie nutzen kann, ohne einen Ruecksprung-Import von dort zu
+    brauchen."""
+
+    def __init__(self, parent, title: str, items: list[str], preselect: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(420, 480)
+        self._all_items = items
+        self._selected: str | None = None
+
+        layout = QVBoxLayout(self)
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText(tr("Suchen..."))
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        layout.addWidget(self._filter_edit)
+
+        self._list_widget = QListWidget()
+        self._list_widget.itemDoubleClicked.connect(lambda _item: self._accept_current())
+        layout.addWidget(self._list_widget, stretch=1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton(tr("Abbrechen"))
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        ok_btn = QPushButton(tr("Auswählen"))
+        ok_btn.clicked.connect(self._accept_current)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        self._populate(items)
+        if preselect:
+            matches = self._list_widget.findItems(preselect, Qt.MatchExactly)
+            if matches:
+                self._list_widget.setCurrentItem(matches[0])
+                self._list_widget.scrollToItem(matches[0])
+
+    def _populate(self, items: list[str]):
+        self._list_widget.clear()
+        self._list_widget.addItems(items)
+        if self._list_widget.count() > 0 and self._list_widget.currentRow() < 0:
+            self._list_widget.setCurrentRow(0)
+
+    def _apply_filter(self, text: str):
+        text_lower = text.lower()
+        self._populate([i for i in self._all_items if text_lower in i.lower()])
+
+    def _accept_current(self):
+        item = self._list_widget.currentItem()
+        if item is not None:
+            self._selected = item.text()
+            self.accept()
+
+    def selected_item(self) -> str | None:
+        return self._selected
 
 
 class PdfViewerDialog(QDialog):
@@ -337,6 +417,47 @@ class SettingsDialog(QDialog):
         self.lang_combo.setCurrentText("English" if get_language() == "en" else "Deutsch")
         lang_row.addWidget(self.lang_combo, stretch=1)
         lang_card.layout().addLayout(lang_row)
+
+        bank_card = self._section(
+            tr("Bank-Import (Enable Banking)"),
+            tr(
+                "Direkter Import von Kontobewegungen ueber deine eigene Enable-Banking-Anwendung, als "
+                "Alternative zum manuellen CSV-Export."
+            ),
+        )
+        self.bank_app_id_label = QLabel("")
+        self.bank_app_id_label.setStyleSheet("border: none;")
+        bank_card.layout().addWidget(self.bank_app_id_label)
+        self.bank_key_label = QLabel("")
+        self.bank_key_label.setWordWrap(True)
+        self.bank_key_label.setStyleSheet("border: none;")
+        bank_card.layout().addWidget(self.bank_key_label)
+        self.bank_last_import_label = QLabel("")
+        self.bank_last_import_label.setStyleSheet(f"color: {COLORS['text_muted']}; border: none;")
+        bank_card.layout().addWidget(self.bank_last_import_label)
+
+        bank_btn_row = QHBoxLayout()
+        wizard_btn = QPushButton(tr("Einrichtungsassistent starten"))
+        wizard_btn.setStyleSheet(self._button_style())
+        wizard_btn.clicked.connect(self._open_enable_banking_wizard)
+        bank_btn_row.addWidget(wizard_btn)
+        self.bank_reset_btn = QPushButton(tr("Verbindung zurücksetzen"))
+        self.bank_reset_btn.setStyleSheet(self._outline_button_style())
+        self.bank_reset_btn.clicked.connect(self._reset_enable_banking)
+        bank_btn_row.addWidget(self.bank_reset_btn)
+        bank_card.layout().addLayout(bank_btn_row)
+
+        bank_individual_row = QHBoxLayout()
+        change_app_id_btn = QPushButton(tr("Application-ID ändern"))
+        change_app_id_btn.setStyleSheet(self._outline_button_style())
+        change_app_id_btn.clicked.connect(self._change_enable_banking_app_id)
+        bank_individual_row.addWidget(change_app_id_btn)
+        change_key_btn = QPushButton(tr("Schlüssel-Pfad ändern"))
+        change_key_btn.setStyleSheet(self._outline_button_style())
+        change_key_btn.clicked.connect(self._change_enable_banking_key_path)
+        bank_individual_row.addWidget(change_key_btn)
+        bank_card.layout().addLayout(bank_individual_row)
+        self._refresh_bank_status()
 
         backup_card = self._section(
             tr("Datensicherung"),
@@ -683,6 +804,85 @@ class SettingsDialog(QDialog):
             self.status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
             self.status_label.setText(tr("Verbindung fehlgeschlagen - URL/Token prüfen."))
 
+    # --- Bank-Import (Enable Banking) --------------------------------------
+    def _refresh_bank_status(self):
+        eb_config = self.state_ref.config.get("enable_banking") or {}
+        app_id_configured = bool(eb_config.get("application_id"))
+        key_path = get_effective_enable_banking_key_path(self.state_ref.config)
+        key_found = key_path.exists()
+
+        self.bank_app_id_label.setText(f"{'✓' if app_id_configured else '✗'} {tr('Application-ID hinterlegt')}")
+        self.bank_app_id_label.setStyleSheet(
+            f"color: {COLORS['green'] if app_id_configured else COLORS['text_muted']}; border: none;"
+        )
+        self.bank_key_label.setText(f"{'✓' if key_found else '✗'} {tr('Schlüssel gefunden')}: {key_path}")
+        self.bank_key_label.setStyleSheet(
+            f"color: {COLORS['green'] if key_found else COLORS['text_muted']}; border: none;"
+        )
+
+        last_import = eb_config.get("last_import_at")
+        if last_import:
+            try:
+                last_import_text = datetime.fromisoformat(last_import).strftime("%d.%m.%Y %H:%M")
+            except ValueError:
+                last_import_text = last_import
+        else:
+            last_import_text = tr("noch nie")
+        self.bank_last_import_label.setText(f"{tr('Letzter erfolgreicher Import')}: {last_import_text}")
+
+        self.bank_reset_btn.setEnabled(app_id_configured or key_found or bool(eb_config.get("key_path")))
+
+    def _open_enable_banking_wizard(self):
+        wizard = EnableBankingSetupWizard(self, self.state_ref)
+        wizard.exec()
+        self._refresh_bank_status()
+
+    def _reset_enable_banking(self):
+        """Loescht application_id/redirect_url/key_path aus der Config nach
+        Sicherheitsabfrage - die .pem-Datei selbst wird NICHT automatisch
+        geloescht, das macht der Nutzer manuell (siehe CLAUDE.md: vor dem
+        Loeschen von Dateien immer nachfragen - hier loeschen wir nur einen
+        Config-Verweis, keine Datei)."""
+        confirm = QMessageBox.question(
+            self,
+            tr("Verbindung zurücksetzen"),
+            tr(
+                "Löscht Application-ID, Redirect-URL und Schlüssel-Pfad aus den Einstellungen. Die "
+                ".pem-Datei selbst wird NICHT automatisch gelöscht. Wirklich zurücksetzen?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self.state_ref.config["enable_banking"] = {
+            "application_id": None,
+            "redirect_url": DEFAULT_REDIRECT_URL,
+            "key_path": None,
+            "last_import_at": None,
+        }
+        self.state_ref.save_config()
+        self._refresh_bank_status()
+
+    def _change_enable_banking_app_id(self):
+        eb_config = self.state_ref.config.setdefault("enable_banking", {})
+        current = eb_config.get("application_id") or ""
+        new_value, ok = QInputDialog.getText(self, tr("Application-ID ändern"), tr("Neue Application-ID:"), text=current)
+        if not ok:
+            return
+        eb_config["application_id"] = new_value.strip() or None
+        self.state_ref.save_config()
+        self._refresh_bank_status()
+
+    def _change_enable_banking_key_path(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, tr("Schlüssel-Datei wählen"), "", "PEM (*.pem)")
+        if not file_path:
+            return
+        eb_config = self.state_ref.config.setdefault("enable_banking", {})
+        eb_config["key_path"] = file_path
+        self.state_ref.save_config()
+        self._refresh_bank_status()
+
     def _save(self):
         state = self.state_ref
         url = self.url_entry.text().strip()
@@ -760,6 +960,535 @@ class SettingsDialog(QDialog):
 
         self.accept()
         self.on_saved()
+
+
+class _EnableBankingAuthWorker(QObject):
+    """Fuehrt den kompletten (blockierenden) Autorisierungs-Flow -
+    enable_banking_client.authorize() + client.create_session() - in einem
+    eigenen Thread aus, sonst friert die UI fuer die Dauer des Bank-Logins
+    im Browser ein (bis zu 5 Minuten, siehe enable_banking_client.py)."""
+
+    finished = Signal(object, object)  # (session_dict, error_message) - genau eines von beiden ist None
+
+    def __init__(self, client: EnableBankingClient, aspsp_name: str, aspsp_country: str, redirect_url: str):
+        super().__init__()
+        self.client = client
+        self.aspsp_name = aspsp_name
+        self.aspsp_country = aspsp_country
+        self.redirect_url = redirect_url
+
+    def run(self):
+        try:
+            code = enable_banking_authorize(self.client, self.aspsp_name, self.aspsp_country, self.redirect_url)
+            session = self.client.create_session(code)
+        except EnableBankingError as exc:
+            self.finished.emit(None, str(exc))
+        except Exception as exc:  # unerwarteter Fehler (z.B. Netzwerk) - trotzdem verstaendlich melden statt abzustuerzen
+            self.finished.emit(None, str(exc))
+        else:
+            self.finished.emit(session, None)
+
+
+class EnableBankingSetupWizard(QDialog):
+    """Mehrseitiger Einrichtungsassistent fuer den Enable-Banking-Bank-
+    Import (siehe enable_banking_client.py) - jederzeit ueber 'Abbrechen'
+    verlassbar. Bereits gespeicherte Zwischenschritte gehen dabei nicht
+    verloren: Application-ID (Seite 4) und ein erfolgreicher Verbindungs-
+    test (Seite 6) schreiben JEWEILS SOFORT in config_manager, statt erst
+    am Ende gesammelt zu speichern wie bei SettingsDialog._save()."""
+
+    PAGE_INTRO, PAGE_REGISTER, PAGE_KEY, PAGE_APP_ID, PAGE_LINK_ACCOUNT, PAGE_TEST = range(6)
+    PAGE_COUNT = 6
+
+    def __init__(self, parent, state):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Bank-Import einrichten"))
+        self.resize(560, 640)
+        self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
+        _apply_window_icon(self)
+        self.state_ref = state
+        self._test_client = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 20, 20, 16)
+        outer.setSpacing(12)
+
+        self.step_label = QLabel("")
+        self.step_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 9pt;")
+        outer.addWidget(self.step_label)
+
+        self.stack = QStackedWidget()
+        outer.addWidget(self.stack, stretch=1)
+
+        self.stack.addWidget(self._build_page_intro())
+        self.stack.addWidget(self._build_page_register())
+        self.stack.addWidget(self._build_page_key())
+        self.stack.addWidget(self._build_page_app_id())
+        self.stack.addWidget(self._build_page_link_account())
+        self.stack.addWidget(self._build_page_test())
+
+        nav_row = QHBoxLayout()
+        self.back_btn = QPushButton(tr("Zurück"))
+        self.back_btn.setStyleSheet(self._secondary_button_style())
+        self.back_btn.clicked.connect(self._go_back)
+        nav_row.addWidget(self.back_btn)
+        nav_row.addStretch()
+        cancel_btn = QPushButton(tr("Abbrechen"))
+        cancel_btn.setStyleSheet(self._secondary_button_style())
+        cancel_btn.clicked.connect(self.reject)
+        nav_row.addWidget(cancel_btn)
+        self.next_btn = QPushButton(tr("Weiter"))
+        self.next_btn.setStyleSheet(self._primary_button_style())
+        self.next_btn.clicked.connect(self._go_next)
+        nav_row.addWidget(self.next_btn)
+        outer.addLayout(nav_row)
+
+        self.stack.currentChanged.connect(self._on_page_changed)
+        self._on_page_changed(0)
+
+    # --- Style-Helfer (eigene Klasse, nicht von SettingsDialog abgeleitet) ---
+    def _primary_button_style(self) -> str:
+        return (
+            f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
+            f"padding: 10px 18px; font-weight: bold; }} QPushButton:hover {{ background-color: #4a76d6; }}"
+        )
+
+    def _secondary_button_style(self) -> str:
+        return (
+            f"QPushButton {{ background: transparent; color: {COLORS['text_muted']}; border: 1px solid "
+            f"{COLORS['text_muted']}; border-radius: 10px; padding: 10px 18px; }}"
+            f"QPushButton:hover {{ background-color: {COLORS['bg_card_hover']}; }}"
+        )
+
+    # --- Navigation -------------------------------------------------------
+    def _on_page_changed(self, index: int):
+        self.step_label.setText(tr("Schritt {current} von {total}", current=index + 1, total=self.PAGE_COUNT))
+        self.back_btn.setEnabled(index > 0)
+        self.next_btn.setText(tr("Fertig") if index == self.PAGE_COUNT - 1 else tr("Weiter"))
+        if index == self.PAGE_KEY:
+            self._refresh_key_check()
+
+    def _go_back(self):
+        self.stack.setCurrentIndex(max(0, self.stack.currentIndex() - 1))
+
+    def _go_next(self):
+        index = self.stack.currentIndex()
+        if index == self.PAGE_KEY and not get_effective_enable_banking_key_path(self.state_ref.config).exists():
+            QMessageBox.warning(
+                self, tr("Kein Schlüssel gefunden"),
+                tr("Bitte zuerst die .pem-Datei in den angezeigten Ordner legen und 'Prüfen' klicken."),
+            )
+            return
+        if index == self.PAGE_APP_ID:
+            app_id = self.app_id_entry.text().strip()
+            if not app_id:
+                QMessageBox.warning(self, tr("Application-ID fehlt"), tr("Bitte eine Application-ID eintragen."))
+                return
+            self.state_ref.config.setdefault("enable_banking", {})["application_id"] = app_id
+            self.state_ref.save_config()
+        if index == self.PAGE_COUNT - 1:
+            self.accept()
+            return
+        self.stack.setCurrentIndex(index + 1)
+
+    # --- Seite 1: Einfuehrung ----------------------------------------------
+    def _build_page_intro(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+        title = QLabel(tr("Bank-Import über Enable Banking einrichten"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+        text = QLabel(
+            tr(
+                "Enable Banking ist eine Open-Banking-Schnittstelle, über die Kontobewegungen direkt von "
+                "deiner Bank abgerufen werden können - als Alternative zum manuellen CSV-Export. Du "
+                "registrierst dafür eine eigene, kostenlose Anwendung mit eigenem Zugang. Die Einrichtung "
+                "dauert ca. 5 Minuten und ist einmalig."
+            )
+        )
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        open_btn = QPushButton(tr("enablebanking.com/sign-in öffnen"))
+        open_btn.setStyleSheet(self._primary_button_style())
+        open_btn.clicked.connect(lambda: webbrowser.open("https://enablebanking.com/sign-in"))
+        layout.addWidget(open_btn)
+        layout.addStretch()
+        return page
+
+    # --- Seite 2: Anwendung registrieren ------------------------------------
+    def _build_page_register(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        title = QLabel(tr("Anwendung registrieren"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+        text = QLabel(
+            tr("Im Enable-Banking-Control-Panel unter 'Applications' auf 'Add a new application' klicken und folgende Werte eintragen:")
+        )
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+        layout.addWidget(self._copyable_row(tr("Environment"), "Production"))
+        redirect_url = (self.state_ref.config.get("enable_banking") or {}).get("redirect_url") or DEFAULT_REDIRECT_URL
+        layout.addWidget(self._copyable_row(tr("Redirect URL"), redirect_url))
+        layout.addWidget(self._copyable_row(tr("Application Name"), tr("frei wählbar, z.B. 'Paperless Sync'"), copyable=False))
+
+        hint = QFrame()
+        hint.setStyleSheet(f"background-color: {COLORS['blue_dim']}; border-radius: 10px;")
+        hint_layout = QVBoxLayout(hint)
+        hint_lbl = QLabel(
+            tr(
+                "💡 Beim Anlegen wird automatisch ein privater Schlüssel als .pem-Datei heruntergeladen - "
+                "Download-Fenster offen lassen, wird im nächsten Schritt gebraucht."
+            )
+        )
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setStyleSheet(f"color: {COLORS['blue']}; border: none;")
+        hint_layout.addWidget(hint_lbl)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return page
+
+    def _copyable_row(self, label: str, value: str, copyable: bool = True) -> QFrame:
+        row_frame = QFrame()
+        row_frame.setStyleSheet(f"background-color: {COLORS['bg_kpi']}; border-radius: 10px;")
+        row = QHBoxLayout(row_frame)
+        row.setContentsMargins(12, 8, 12, 8)
+        text_col = QVBoxLayout()
+        lbl = QLabel(label)
+        lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 8pt; border: none;")
+        text_col.addWidget(lbl)
+        value_lbl = QLabel(value)
+        value_lbl.setWordWrap(True)
+        value_lbl.setStyleSheet("border: none;")
+        text_col.addWidget(value_lbl)
+        row.addLayout(text_col, stretch=1)
+        if copyable:
+            copy_btn = QPushButton(tr("Kopieren"))
+            copy_btn.setStyleSheet(self._secondary_button_style())
+            copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(value))
+            row.addWidget(copy_btn)
+        return row_frame
+
+    # --- Seite 3: Schluessel ablegen -----------------------------------------
+    def _build_page_key(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        title = QLabel(tr("Schlüssel ablegen"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+
+        key_path = get_effective_enable_banking_key_path(self.state_ref.config)
+        path_lbl = QLabel(str(key_path))
+        path_lbl.setWordWrap(True)
+        path_lbl.setStyleSheet(f"background-color: {COLORS['bg_input']}; border-radius: 8px; padding: 8px;")
+        layout.addWidget(path_lbl)
+
+        text = QLabel(tr("Verschiebe die heruntergeladene .pem-Datei in diesen Ordner."))
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+        btn_row = QHBoxLayout()
+        open_folder_btn = QPushButton(tr("Ordner öffnen"))
+        open_folder_btn.setStyleSheet(self._secondary_button_style())
+        open_folder_btn.clicked.connect(lambda p=key_path: self._open_key_folder(p))
+        btn_row.addWidget(open_folder_btn)
+        check_btn = QPushButton(tr("Prüfen"))
+        check_btn.setStyleSheet(self._primary_button_style())
+        check_btn.clicked.connect(self._refresh_key_check)
+        btn_row.addWidget(check_btn)
+        layout.addLayout(btn_row)
+
+        self.key_status_label = QLabel("")
+        self.key_status_label.setWordWrap(True)
+        layout.addWidget(self.key_status_label)
+        layout.addStretch()
+        return page
+
+    def _open_key_folder(self, key_path: Path):
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(key_path.parent)))
+
+    def _refresh_key_check(self):
+        key_path = get_effective_enable_banking_key_path(self.state_ref.config)
+        if key_path.exists():
+            self.key_status_label.setStyleSheet(f"color: {COLORS['green']}; border: none;")
+            self.key_status_label.setText(f"✓ {tr('Schlüssel gefunden.')}")
+        else:
+            self.key_status_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+            self.key_status_label.setText(f"✗ {tr('Noch keine .pem-Datei gefunden.')}")
+
+    # --- Seite 4: Application-ID --------------------------------------------
+    def _build_page_app_id(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        title = QLabel(tr("Application-ID eintragen"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+        text = QLabel(tr("Zu finden im Enable-Banking-Control-Panel unter deiner Anwendung ('Application ID')."))
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        self.app_id_entry = QLineEdit((self.state_ref.config.get("enable_banking") or {}).get("application_id") or "")
+        self.app_id_entry.setStyleSheet(_entry_style())
+        layout.addWidget(self.app_id_entry)
+        layout.addStretch()
+        return page
+
+    # --- Seite 5: Eigenes Konto verknuepfen ----------------------------------
+    def _build_page_link_account(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        title = QLabel(tr("Eigenes Konto verknüpfen"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+        text = QLabel(
+            tr(
+                "Im Enable-Banking-Control-Panel bei deiner Anwendung das eigene Konto whitelisten (im "
+                "'restricted production'-Modus ist dafür kein separater Vertrag nötig, solange die "
+                "Anwendung nur von dir selbst genutzt wird)."
+            )
+        )
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        open_btn = QPushButton(tr("Enable Banking Control Panel öffnen"))
+        open_btn.setStyleSheet(self._primary_button_style())
+        open_btn.clicked.connect(lambda: webbrowser.open("https://enablebanking.com/sign-in"))
+        layout.addWidget(open_btn)
+        layout.addStretch()
+        return page
+
+    # --- Seite 6: Test -----------------------------------------------------
+    def _build_page_test(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        title = QLabel(tr("Verbindung testen"))
+        title.setFont(qfont(13, bold=True))
+        layout.addWidget(title)
+        text = QLabel(
+            tr("Testet den kompletten Ablauf einmal: Bank-Login im Browser, danach Abruf der letzten Kontobewegungen als Vorschau.")
+        )
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+        country_row = QHBoxLayout()
+        country_row.addWidget(QLabel(tr("Land:")))
+        self.test_country_entry = QLineEdit()
+        self.test_country_entry.setPlaceholderText(tr("z.B. AT, DE"))
+        self.test_country_entry.setStyleSheet(_entry_style())
+        self.test_country_entry.setMaximumWidth(100)
+        country_row.addWidget(self.test_country_entry)
+        country_row.addStretch()
+        layout.addLayout(country_row)
+
+        self.test_btn = QPushButton(tr("Verbindung testen"))
+        self.test_btn.setStyleSheet(self._primary_button_style())
+        self.test_btn.clicked.connect(self._on_test_connection)
+        layout.addWidget(self.test_btn)
+
+        self.test_result_label = QLabel("")
+        self.test_result_label.setWordWrap(True)
+        layout.addWidget(self.test_result_label)
+        layout.addStretch()
+        return page
+
+    def _on_test_connection(self):
+        country = self.test_country_entry.text().strip().upper()
+        if not country:
+            QMessageBox.warning(self, tr("Land fehlt"), tr("Bitte zuerst einen Ländercode eingeben."))
+            return
+
+        eb_config = self.state_ref.config.get("enable_banking") or {}
+        application_id = eb_config.get("application_id")
+        key_path = get_effective_enable_banking_key_path(self.state_ref.config)
+        redirect_url = eb_config.get("redirect_url") or DEFAULT_REDIRECT_URL
+
+        try:
+            client = EnableBankingClient(application_id=application_id, key_path=key_path)
+            aspsps = client.get_aspsps(country)
+        except EnableBankingError as exc:
+            self._show_test_error(str(exc))
+            return
+
+        if not aspsps:
+            self._show_test_error(tr("Für {country} wurden keine Banken gefunden.", country=country))
+            return
+
+        names = [a.get("name", "?") for a in aspsps]
+        picker = SearchableListDialog(self, tr("Bank wählen"), names)
+        if picker.exec() != QDialog.Accepted:
+            return
+        bank_name = picker.selected_item()
+        if not bank_name:
+            return
+
+        self.test_btn.setEnabled(False)
+        self.test_btn.setText(f"⏳ {tr('Warte auf Bank-Login...')}")
+        self._test_client = client
+        self._test_thread = QThread()
+        self._test_worker = _EnableBankingAuthWorker(client, bank_name, country, redirect_url)
+        self._test_worker.moveToThread(self._test_thread)
+        self._test_thread.started.connect(self._test_worker.run)
+        self._test_worker.finished.connect(self._on_test_auth_finished)
+        self._test_worker.finished.connect(self._test_thread.quit)
+        self._test_thread.finished.connect(self._test_thread.deleteLater)
+        self._test_thread.start()
+
+    def _on_test_auth_finished(self, session, error):
+        self.test_btn.setEnabled(True)
+        self.test_btn.setText(tr("Verbindung testen"))
+        if error:
+            self._show_test_error(error)
+            return
+
+        accounts = (session or {}).get("accounts") or []
+        if not accounts:
+            self._show_test_error(tr("Keine autorisierten Konten in der Session gefunden."))
+            return
+
+        try:
+            raw_txs = self._test_client.get_transactions(accounts[0]["uid"])
+        except EnableBankingError as exc:
+            self._show_test_error(str(exc))
+            return
+
+        preview_df = transactions_to_dataframe(raw_txs[:5])
+        preview_lines = [
+            f"{row['Datum']}  {row['Betrag']} €  {str(row['Verwendungszweck'])[:40]}"
+            for row in preview_df.to_dict("records")
+        ]
+        preview_text = "\n".join(preview_lines) or tr("(keine Buchungen im Standardzeitraum)")
+
+        self.test_result_label.setStyleSheet(f"color: {COLORS['green']}; border: none;")
+        self.test_result_label.setText(f"✓ {tr('Verbindung erfolgreich!')}\n\n{preview_text}")
+
+        eb_config = self.state_ref.config.setdefault("enable_banking", {})
+        eb_config["last_import_at"] = datetime.now().isoformat()
+        self.state_ref.save_config()
+
+    def _show_test_error(self, message: str):
+        self.test_result_label.setStyleSheet(f"color: {COLORS['red']}; border: none;")
+        hint = ""
+        lowered = message.lower()
+        if "application" in lowered or "unauthorized" in lowered or "401" in lowered:
+            hint = f"\n\n{tr('Mögliche Ursache: Application-ID falsch oder Konto noch nicht verknüpft.')}"
+        self.test_result_label.setText(f"✗ {message}{hint}")
+
+
+def _last_day_of_month(year: int, month: int) -> date:
+    if month == 12:
+        return date(year, 12, 31)
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+class EnableBankingDateRangeDialog(QDialog):
+    """Zeitraum-Auswahl vor dem eigentlichen Bank-Import (siehe
+    desktop_app_qt._on_bank_import_click) - vorbelegt mit dem aktuell in
+    der Sidebar gewaehlten Monat (AppState.selected_month), frei
+    aenderbar. Manche Banken stellen ueber die Schnittstelle nur eine
+    begrenzte Historie bereit (haeufig ~90 Tage) - der Hinweistext macht
+    das vorab transparent, damit ein kuerzeres Ergebnis nicht wie ein
+    Fehler wirkt."""
+
+    def __init__(self, parent, default_from: date, default_to: date):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Zeitraum wählen"))
+        self.resize(380, 300)
+        self.setStyleSheet(f"QDialog {{ background-color: {COLORS['bg_main']}; }} QLabel {{ color: {COLORS['text_primary']}; }}")
+        _apply_window_icon(self)
+        self._confirmed_range = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel(tr("Zeitraum für den Bank-Import"))
+        title.setFont(qfont(12, bold=True))
+        layout.addWidget(title)
+
+        quick_row = QHBoxLayout()
+        for label, handler in (
+            (tr("Aktueller Monat"), self._set_current_month),
+            (tr("Letzte 30 Tage"), lambda: self._set_last_n_days(30)),
+            (tr("Letzte 90 Tage"), lambda: self._set_last_n_days(90)),
+        ):
+            btn = QPushButton(label)
+            btn.setStyleSheet(self._quick_button_style())
+            btn.clicked.connect(handler)
+            quick_row.addWidget(btn)
+        layout.addLayout(quick_row)
+
+        from_row = QHBoxLayout()
+        from_row.addWidget(QLabel(tr("Von:")))
+        self.date_from_entry = QLineEdit(default_from.strftime("%d.%m.%Y"))
+        self.date_from_entry.setStyleSheet(_entry_style())
+        from_row.addWidget(self.date_from_entry)
+        layout.addLayout(from_row)
+
+        to_row = QHBoxLayout()
+        to_row.addWidget(QLabel(tr("Bis:")))
+        self.date_to_entry = QLineEdit(default_to.strftime("%d.%m.%Y"))
+        self.date_to_entry.setStyleSheet(_entry_style())
+        to_row.addWidget(self.date_to_entry)
+        layout.addLayout(to_row)
+
+        hint = QLabel(tr("Manche Banken begrenzen den abrufbaren Zeitraum, unabhängig von deiner Auswahl hier."))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 8pt;")
+        layout.addWidget(hint)
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton(tr("Abbrechen"))
+        cancel_btn.setStyleSheet(self._quick_button_style())
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        confirm_btn = QPushButton(tr("Weiter"))
+        confirm_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {COLORS['blue']}; color: white; border-radius: 10px; "
+            f"padding: 8px 16px; font-weight: bold; }} QPushButton:hover {{ background-color: #4a76d6; }}"
+        )
+        confirm_btn.clicked.connect(self._confirm)
+        btn_row.addWidget(confirm_btn)
+        layout.addLayout(btn_row)
+
+    def _quick_button_style(self) -> str:
+        return (
+            f"QPushButton {{ background: transparent; color: {COLORS['text_muted']}; border: 1px solid "
+            f"{COLORS['text_muted']}; border-radius: 8px; padding: 6px 10px; font-size: 8pt; }}"
+            f"QPushButton:hover {{ background-color: {COLORS['bg_card_hover']}; }}"
+        )
+
+    def _set_current_month(self):
+        today = date.today()
+        self.date_from_entry.setText(date(today.year, today.month, 1).strftime("%d.%m.%Y"))
+        self.date_to_entry.setText(_last_day_of_month(today.year, today.month).strftime("%d.%m.%Y"))
+
+    def _set_last_n_days(self, n: int):
+        today = date.today()
+        self.date_from_entry.setText((today - timedelta(days=n)).strftime("%d.%m.%Y"))
+        self.date_to_entry.setText(today.strftime("%d.%m.%Y"))
+
+    def _confirm(self):
+        date_from = parse_date(self.date_from_entry.text())
+        date_to = parse_date(self.date_to_entry.text())
+        if not date_from or not date_to:
+            QMessageBox.warning(self, tr("Ungültiges Datum"), tr("Bitte gültige Datumswerte im Format TT.MM.JJJJ eingeben."))
+            return
+        if date_from > date_to:
+            QMessageBox.warning(self, tr("Ungültiger Zeitraum"), tr("Das Von-Datum muss vor dem Bis-Datum liegen."))
+            return
+        self._confirmed_range = (date_from, date_to)
+        self.accept()
+
+    def selected_range(self):
+        return self._confirmed_range
 
 
 class MappingDialog(QDialog):
