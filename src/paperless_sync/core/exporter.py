@@ -23,7 +23,7 @@ from datetime import date as date_cls
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -385,6 +385,7 @@ def export_fiscal_year(
     client,
     company_name: str = "",
     logo_path: Path | None = None,
+    on_progress=None,
 ) -> Path:
     """Baut den kompletten Jahresexport: ruft generate_export() fuer jeden
     der 12 Monate des Geschaeftsjahres frisch aus transactions auf (siehe
@@ -408,17 +409,30 @@ def export_fiscal_year(
 
     Prueft NICHT selbst auf offene Posten, verweigert den Export nie - das
     ist Aufgabe der aufrufenden UI-Schicht (siehe generate_export-Docstring
-    fuer denselben Grundsatz auf Monatsebene, sowie die geplante
-    jahresweite Vorab-Warnung)."""
+    fuer denselben Grundsatz auf Monatsebene, sowie die jahresweite
+    Vorab-Warnung).
+
+    on_progress (optional): Callback(step: int, total: int, label: str),
+    einmal je Monat VOR dessen Verarbeitung plus einmal fuer die
+    abschliessenden Jahres-Zusammenfassungen - fuer eine Fortschrittsanzeige
+    in der UI (siehe desktop_app_qt.FiscalYearExportWorker), da der
+    komplette Ablauf bei vielen Belegen mehrere Sekunden dauern kann."""
     year_root = Path(export_base_dir) / fiscal_year_folder_name(start_year, fiscal_config)
     year_root.mkdir(parents=True, exist_ok=True)
 
     month_strs = get_fiscal_year_months(start_year, fiscal_config)
-    for month_str in month_strs:
+    total_steps = len(month_strs) + 1
+    for i, month_str in enumerate(month_strs, start=1):
+        if on_progress:
+            month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
+            on_progress(i, total_steps, f"Monat {i} von {len(month_strs)}: {month_label}")
         generate_export(year_root, month_str, transactions, csv_df, csv_delimiter, client)
 
+    if on_progress:
+        on_progress(total_steps, total_steps, "Jahres-Zusammenfassungen werden erstellt ...")
+
     (year_root / "00_Jahresuebersicht.csv").write_bytes(
-        _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter)
+        _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter, transactions)
     )
     (year_root / "00_Offene_Posten_Jahr.csv").write_bytes(
         _build_offene_posten_jahr_csv(year_root, month_strs, csv_delimiter)
@@ -432,7 +446,9 @@ def export_fiscal_year(
     return year_root
 
 
-def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_delimiter: str) -> bytes:
+def _build_jahresuebersicht_csv(
+    year_root: Path, month_strs: list[str], csv_delimiter: str, transactions: list[dict]
+) -> bytes:
     """00_Jahresuebersicht.csv - fasst die bereits geschriebenen
     00_Uebersicht.csv ALLER 12 Monate (siehe export_fiscal_year) in einer
     Tabelle zusammen, ergaenzt um 'Monat' und 'Relativer Pfad zum
@@ -441,12 +457,19 @@ def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_deli
     Liest bewusst die bereits erzeugten Monatsdateien zurueck, statt Status/
     Belegpfade ein zweites Mal aus den Transaktionen zu berechnen - so
     bleiben Jahres- und Monatsuebersicht garantiert konsistent (gleiche
-    zentrale Status-Werte aus tx_status.py, einmal pro Monat berechnet)."""
+    zentrale Status-Werte aus tx_status.py, einmal pro Monat berechnet).
+
+    'Empfänger/Absender' ist in der monatlichen 00_Uebersicht.csv NICHT
+    enthalten (deren Spalten sind fest vorgegeben, siehe dortiger
+    Docstring) - hier stattdessen direkt aus transactions nachgezogen und
+    per Position zugeordnet: _build_uebersicht_csv sortiert dieselbe
+    Monats-Teilmenge von transactions ebenfalls nur nach Datum (stabiler
+    Sort), die Reihenfolge ist also garantiert identisch."""
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
     writer.writerow(
         ["Monat", "Relativer Pfad zum Monatsordner", "Datum", "Betrag", "Verwendungszweck",
-         "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"]
+         "Empfänger/Absender", "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"]
     )
     for month_str in month_strs:
         folder_name = month_folder_name(month_str)
@@ -454,9 +477,12 @@ def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_deli
         if not month_csv_path.exists():
             continue
         text = month_csv_path.read_bytes().decode("utf-8-sig")
-        rows = list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))
-        for row in rows[1:]:  # Kopfzeile ueberspringen
-            writer.writerow([month_str, folder_name] + row)
+        rows = list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))[1:]  # Kopfzeile ueberspringen
+        month_transactions = sorted(
+            (t for t in transactions if t["date"].strftime("%Y-%m") == month_str), key=lambda t: t["date"]
+        )
+        for row, t in zip(rows, month_transactions):
+            writer.writerow([month_str, folder_name, row[0], row[1], row[2], t.get("counterparty") or "", row[3], row[4], row[5]])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -466,8 +492,8 @@ def _read_jahresuebersicht_rows(year_root: Path, csv_delimiter: str) -> list[lis
     und _build_jahresuebersicht_pdf, damit beide garantiert dieselben Daten
     zeigen wie die CSV selbst. Spalten (siehe _build_jahresuebersicht_csv):
     [0] Monat, [1] Relativer Pfad zum Monatsordner, [2] Datum, [3] Betrag,
-    [4] Verwendungszweck, [5] Zugeordneter Beleg (relativer Pfad),
-    [6] Status, [7] Tag."""
+    [4] Verwendungszweck, [5] Empfänger/Absender,
+    [6] Zugeordneter Beleg (relativer Pfad), [7] Status, [8] Tag."""
     text = (year_root / "00_Jahresuebersicht.csv").read_bytes().decode("utf-8-sig")
     return list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))[1:]
 
@@ -486,7 +512,7 @@ def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_de
     rows = _read_jahresuebersicht_rows(year_root, csv_delimiter)
     open_rows_by_month: dict[str, list[list[str]]] = {m: [] for m in month_strs}
     for row in rows:
-        status = _LABEL_TO_STATUS.get(row[6])
+        status = _LABEL_TO_STATUS.get(row[7])
         if status in OPEN_STATUSES:
             open_rows_by_month.setdefault(row[0], []).append(row)
 
@@ -502,17 +528,17 @@ def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_de
         month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
         counts: dict[str, int] = {}
         for row in month_rows:
-            status = _LABEL_TO_STATUS.get(row[6])
-            key = status.value if status else row[6]
+            status = _LABEL_TO_STATUS.get(row[7])
+            key = status.value if status else row[7]
             counts[key] = counts.get(key, 0) + 1
         parts = ", ".join(f"{n} {key}" for key, n in counts.items())
         writer.writerow([f"{month_label}: {parts}"])
     writer.writerow([])
 
-    writer.writerow(["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"])
+    writer.writerow(["Monat", "Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Grund"])
     for month_str in month_strs:
         for row in open_rows_by_month.get(month_str, []):
-            writer.writerow([row[0], row[2], row[3], row[4], row[6]])
+            writer.writerow([row[0], row[2], row[3], row[4], row[5], row[7]])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -568,7 +594,7 @@ def _build_jahresuebersicht_pdf(
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=1.5 * cm, rightMargin=1.5 * cm
+        buf, pagesize=landscape(A4), topMargin=1.5 * cm, bottomMargin=1.5 * cm, leftMargin=1.5 * cm, rightMargin=1.5 * cm
     )
     story = []
 
@@ -593,7 +619,7 @@ def _build_jahresuebersicht_pdf(
     story.append(Spacer(1, 0.2 * cm))
 
     open_rows_by_month: dict[str, list[list[str]]] = {
-        month_str: [r for r in rows_by_month.get(month_str, []) if _LABEL_TO_STATUS.get(r[6]) in OPEN_STATUSES]
+        month_str: [r for r in rows_by_month.get(month_str, []) if _LABEL_TO_STATUS.get(r[7]) in OPEN_STATUSES]
         for month_str in month_strs
     }
 
@@ -606,8 +632,8 @@ def _build_jahresuebersicht_pdf(
         month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
         counts: dict[str, int] = {}
         for row in open_rows:
-            status = _LABEL_TO_STATUS.get(row[6])
-            key = status.value if status else row[6]
+            status = _LABEL_TO_STATUS.get(row[7])
+            key = status.value if status else row[7]
             counts[key] = counts.get(key, 0) + 1
         parts = ", ".join(f"{n} {key}" for key, n in counts.items())
         story.append(Paragraph(f"{month_label}: {parts}", styles["Normal"]))
@@ -615,9 +641,11 @@ def _build_jahresuebersicht_pdf(
 
     all_open_rows = [row for month_str in month_strs for row in open_rows_by_month[month_str]]
     if all_open_rows:
-        row_colors = [_STATUS_COLORS_PDF.get(_LABEL_TO_STATUS.get(row[6])) for row in all_open_rows]
-        detail_rows = [[row[0], row[2], row[3], row[4], row[6]] for row in all_open_rows]
-        story.append(_table(["Monat", "Datum", "Betrag", "Verwendungszweck", "Grund"], detail_rows, row_colors))
+        row_colors = [_STATUS_COLORS_PDF.get(_LABEL_TO_STATUS.get(row[7])) for row in all_open_rows]
+        detail_rows = [[row[0], row[2], row[3], row[4], row[5], row[7]] for row in all_open_rows]
+        story.append(_table(
+            ["Monat", "Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Grund"], detail_rows, row_colors
+        ))
     else:
         story.append(Paragraph("Keine offenen Posten im gesamten Geschäftsjahr.", styles["Normal"]))
     story.append(PageBreak())
@@ -631,8 +659,11 @@ def _build_jahresuebersicht_pdf(
         if not month_rows:
             story.append(Paragraph("Keine Buchungen in diesem Monat.", styles["Normal"]))
         else:
-            detail_rows = [[row[2], row[3], row[4], row[5], row[6], row[7], row[0]] for row in month_rows]
-            story.append(_table(["Datum", "Betrag", "Verwendungszweck", "Beleg", "Status", "Tag", "Monat"], detail_rows))
+            detail_rows = [[row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[0]] for row in month_rows]
+            story.append(_table(
+                ["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Beleg", "Status", "Tag", "Monat"],
+                detail_rows,
+            ))
         if idx < len(month_strs) - 1:
             story.append(PageBreak())
 
