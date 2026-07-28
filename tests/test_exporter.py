@@ -17,6 +17,7 @@ import pytest
 
 from paperless_sync.core.exporter import (
     _build_einzahlungen_csv,
+    _build_einzahlungen_jahr_pdf,
     _build_getaggte_ohne_beleg_csv,
     _build_jahresuebersicht_csv,
     _build_jahresuebersicht_pdf,
@@ -233,8 +234,8 @@ def test_generate_export_reports_missing_document_exactly_once_not_twice(tmp_pat
     assert tx["status"] == TxStatus.UNRESOLVED
     uebersicht_rows = _rows((Path(export_root) / "00_Uebersicht.csv").read_bytes())
     assert len(uebersicht_rows) - 1 == 1
-    assert uebersicht_rows[1][3] == ""  # kein Beleg-Pfad, da Dokument fehlt
-    assert uebersicht_rows[1][4] == "Offen"
+    assert uebersicht_rows[1][4] == ""  # kein Beleg-Pfad, da Dokument fehlt
+    assert uebersicht_rows[1][5] == "Offen"
 
 
 # --- CSV-Bausteine --------------------------------------------------------
@@ -255,7 +256,9 @@ def test_build_uebersicht_csv_contains_all_transactions_regardless_of_status():
     ]
     csv_bytes = _build_uebersicht_csv(txs, ";", receipt_paths={})
     rows = _rows(csv_bytes)
-    assert rows[0] == ["Datum", "Betrag", "Verwendungszweck", "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"]
+    assert rows[0] == [
+        "Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag",
+    ]
     assert len(rows) - 1 == 6  # Header + alle 6 Buchungen, unabhaengig vom Status
 
 
@@ -263,22 +266,30 @@ def test_build_uebersicht_csv_includes_receipt_path():
     tx = make_transaction(id_="001", status=TxStatus.MATCHED)
     csv_bytes = _build_uebersicht_csv([tx], ";", receipt_paths={"001": ["01_Belege_zugeordnet/beleg.pdf"]})
     rows = _rows(csv_bytes)
-    assert rows[1][3] == "01_Belege_zugeordnet/beleg.pdf"
+    assert rows[1][4] == "01_Belege_zugeordnet/beleg.pdf"
+
+
+def test_build_uebersicht_csv_includes_counterparty():
+    tx = make_transaction(id_="001", status=TxStatus.MATCHED, counterparty="Mueller GmbH")
+    csv_bytes = _build_uebersicht_csv([tx], ";", receipt_paths={})
+    rows = _rows(csv_bytes)
+    assert rows[1][3] == "Mueller GmbH"
 
 
 def test_build_getaggte_ohne_beleg_csv_only_tagged():
     txs = [
-        make_transaction(id_="001", status=TxStatus.TAGGED, tag="PRIVAT"),
+        make_transaction(id_="001", status=TxStatus.TAGGED, tag="PRIVAT", counterparty="Mueller GmbH"),
         make_transaction(id_="002", status=TxStatus.MATCHED),
     ]
     rows = _rows(_build_getaggte_ohne_beleg_csv(txs, ";"))
     assert len(rows) - 1 == 1
-    assert rows[1][3] == "PRIVAT"
+    assert rows[1][3] == "Mueller GmbH"
+    assert rows[1][4] == "PRIVAT"
 
 
 def test_build_offene_posten_csv_only_open_statuses():
     txs = [
-        make_transaction(id_="001", status=TxStatus.UNRESOLVED),
+        make_transaction(id_="001", status=TxStatus.UNRESOLVED, counterparty="Mueller GmbH"),
         make_transaction(id_="002", status=TxStatus.MULTI_MATCH),
         make_transaction(id_="003", status=TxStatus.DUPLICATE_SUSPECT),
         make_transaction(id_="004", status=TxStatus.SPLIT_PAYMENT),
@@ -287,16 +298,18 @@ def test_build_offene_posten_csv_only_open_statuses():
     ]
     rows = _rows(_build_offene_posten_csv(txs, ";"))
     assert len(rows) - 1 == 4
+    assert rows[1][3] == "Mueller GmbH"
 
 
 def test_build_einzahlungen_csv_only_tagged_einzahlung():
     txs = [
-        make_transaction(id_="001", status=TxStatus.TAGGED, tag="EINZAHLUNG"),
+        make_transaction(id_="001", status=TxStatus.TAGGED, tag="EINZAHLUNG", counterparty="Mueller GmbH"),
         make_transaction(id_="002", status=TxStatus.TAGGED, tag="PRIVAT"),
         make_transaction(id_="003", status=TxStatus.MATCHED),
     ]
     rows = _rows(_build_einzahlungen_csv(txs, ";"))
     assert len(rows) - 1 == 1
+    assert rows[1][3] == "Mueller GmbH"
 
 
 def test_build_kontoauszug_csv_skips_none_row_index():
@@ -390,7 +403,7 @@ def test_generate_export_zip_and_reopen_relative_paths_resolve(tmp_path, full_mo
 
     reopened_root = unzip_dir / "2026-01_Januar"
     uebersicht_rows = _rows((reopened_root / "00_Uebersicht.csv").read_bytes())
-    relative_paths = [row[3] for row in uebersicht_rows[1:] if row[3]]
+    relative_paths = [row[4] for row in uebersicht_rows[1:] if row[4]]
     assert relative_paths  # mindestens der eine MATCHED-Beleg hat einen Pfad
     for rel_path in relative_paths:
         assert (reopened_root / rel_path).exists()
@@ -541,7 +554,7 @@ def test_zip_export_folder_preserves_relative_paths_after_extraction(tmp_path):
 
     reopened_root = unzip_dir / "Jahresexport_2026"
     uebersicht_rows = _rows((reopened_root / "2026-01_Januar" / "00_Uebersicht.csv").read_bytes())
-    rel_path = uebersicht_rows[1][3]
+    rel_path = uebersicht_rows[1][4]
     assert rel_path
     assert (reopened_root / "2026-01_Januar" / rel_path).exists()
 
@@ -550,13 +563,11 @@ def test_zip_export_folder_preserves_relative_paths_after_extraction(tmp_path):
 
 def test_build_jahresuebersicht_csv_combines_all_months(tmp_path):
     year_root = tmp_path / "Jahresexport_2026"
-    transactions = []
     for month_str, purpose in (("2026-01", "Januar-Buchung"), ("2026-02", "Februar-Buchung")):
         tx = make_transaction(id_="001", date_=date(2026, int(month_str[-2:]), 10), purpose=purpose, row_index=None, counterparty="Muster Empfaenger GmbH")
-        transactions.append(tx)
         generate_export(year_root, month_str, [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
 
-    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";", transactions)
+    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";")
     rows = _rows(csv_bytes)
     assert rows[0] == [
         "Monat", "Relativer Pfad zum Monatsordner", "Datum", "Betrag", "Verwendungszweck",
@@ -577,7 +588,7 @@ def test_build_jahresuebersicht_csv_skips_missing_month_folder(tmp_path):
     generate_export(year_root, "2026-01", [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
 
     # "2026-02" wurde nie generiert (z.B. teilweiser Export) - darf nicht crashen
-    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";", [tx])
+    csv_bytes = _build_jahresuebersicht_csv(year_root, ["2026-01", "2026-02"], ";")
     rows = _rows(csv_bytes)
     assert len(rows) - 1 == 1
 
@@ -630,13 +641,11 @@ def _build_year_root_with_jahresuebersicht(tmp_path, month_transactions: dict[st
     _build_jahresuebersicht_pdf, die beide darauf aufbauen."""
     year_root = tmp_path / "Jahresexport_2026"
     year_root.mkdir(parents=True, exist_ok=True)
-    all_transactions = []
     for month_str, txs in month_transactions.items():
         generate_export(year_root, month_str, txs, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
-        all_transactions.extend(txs)
     month_strs = get_fiscal_year_months(2026, {"calendar_year": True})
     (year_root / "00_Jahresuebersicht.csv").write_bytes(
-        _build_jahresuebersicht_csv(year_root, month_strs, ";", all_transactions)
+        _build_jahresuebersicht_csv(year_root, month_strs, ";")
     )
     return year_root, month_strs
 
@@ -712,12 +721,36 @@ def test_build_jahresuebersicht_pdf_handles_missing_logo_gracefully(tmp_path):
     assert pdf_bytes.startswith(b"%PDF")
 
 
-# --- export_fiscal_year: alle drei Jahres-Zusammenfassungen -----------------
+# --- 00_Einzahlungen_Jahr.pdf --------------------------------------------------
 
-def test_export_fiscal_year_writes_all_three_summary_files(tmp_path):
+def test_build_einzahlungen_jahr_pdf_produces_valid_pdf_with_deposits(tmp_path):
+    month_transactions = {
+        "2026-01": [make_transaction(id_="001", date_=date(2026, 1, 10), amount=100.0, status=TxStatus.TAGGED, tag="EINZAHLUNG", row_index=None)],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    pdf_bytes = _build_einzahlungen_jahr_pdf(year_root, month_strs, "2026", ";", "Musterfirma GmbH", None)
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 500
+
+
+def test_build_einzahlungen_jahr_pdf_handles_no_deposits(tmp_path):
+    month_transactions = {
+        "2026-01": [make_transaction(id_="001", date_=date(2026, 1, 10), status=TxStatus.MATCHED, row_index=None)],
+    }
+    year_root, month_strs = _build_year_root_with_jahresuebersicht(tmp_path, month_transactions)
+
+    pdf_bytes = _build_einzahlungen_jahr_pdf(year_root, month_strs, "2026", ";", "", None)
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+# --- export_fiscal_year: alle vier Jahres-Zusammenfassungen -----------------
+
+def test_export_fiscal_year_writes_all_four_summary_files(tmp_path):
     transactions = [
         make_transaction(id_="001", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None),
         make_transaction(id_="002", date_=date(2026, 5, 5), status=TxStatus.MATCHED, row_index=None),
+        make_transaction(id_="003", date_=date(2026, 6, 1), amount=200.0, status=TxStatus.TAGGED, tag="EINZAHLUNG", row_index=None),
     ]
     year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, {"calendar_year": True}, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";",
@@ -728,6 +761,8 @@ def test_export_fiscal_year_writes_all_three_summary_files(tmp_path):
     assert (year_root / "00_Offene_Posten_Jahr.csv").exists()
     pdf_bytes = (year_root / "00_Jahresuebersicht.pdf").read_bytes()
     assert pdf_bytes.startswith(b"%PDF")
+    einzahlungen_pdf_bytes = (year_root / "00_Einzahlungen_Jahr.pdf").read_bytes()
+    assert einzahlungen_pdf_bytes.startswith(b"%PDF")
 
     offene_rows = _rows((year_root / "00_Offene_Posten_Jahr.csv").read_bytes())
     detail_header_idx = next(i for i, r in enumerate(offene_rows) if r == ["Monat", "Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Grund"])

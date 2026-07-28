@@ -111,6 +111,7 @@ Next to the monthly export, a full fiscal year can be bundled into one folder wi
   - `00_Jahresuebersicht.csv` — every transaction of the year in one table, with columns showing which month/folder each one belongs to.
   - `00_Offene_Posten_Jahr.csv` — only the still-unresolved transactions across the whole year, with a per-month/status summary count at the top.
   - `00_Jahresuebersicht.pdf` — a cover page, a summary page listing every open item first (color-coded by status, counted per month) before the full transaction list, and then the complete year grouped by month.
+  - `00_Einzahlungen_Jahr.pdf` — only the incoming-payment ("Einzahlung"-tagged) transactions across the whole year, grouped by month with a subtotal per month and a grand total at the end.
 - If anything is still unresolved anywhere in the year, a warning shows how many and in which months before the export runs — same idea as the existing monthly-export warning, just year-wide.
 - The finished folder can optionally be saved as a ZIP right after the export completes.
 

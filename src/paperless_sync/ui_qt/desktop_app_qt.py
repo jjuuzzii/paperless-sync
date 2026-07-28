@@ -253,7 +253,7 @@ class DocDownloadWorker(QObject):
 
 
 class FiscalYearExportWorker(QObject):
-    """Baut den Jahresexport (12x generate_export + drei Jahres-
+    """Baut den Jahresexport (12x generate_export + vier Jahres-
     Zusammenfassungen, siehe exporter.export_fiscal_year) in einem eigenen
     Thread aus - kann bei vielen Belegen/Paperless-Downloads mehrere
     Sekunden dauern, sonst friert die UI dafuer komplett ein (gleiches

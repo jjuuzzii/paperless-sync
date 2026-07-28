@@ -242,7 +242,9 @@ def _build_uebersicht_csv(
     (Anforderung 2), Spalten exakt wie vorgegeben."""
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
-    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"])
+    writer.writerow(
+        ["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Zugeordneter Beleg (relativer Pfad)", "Status", "Tag"]
+    )
     for t in sorted(month_transactions, key=lambda t: t["date"]):
         beleg = "; ".join(receipt_paths.get(t["id"]) or [])
         writer.writerow(
@@ -250,6 +252,7 @@ def _build_uebersicht_csv(
                 t["date"].strftime("%d.%m.%Y"),
                 f"{t['amount_raw']:.2f}",
                 t["purpose"],
+                t.get("counterparty") or "",
                 beleg,
                 label_de(t["status"]),
                 t.get("tag") or "",
@@ -268,9 +271,11 @@ def _build_getaggte_ohne_beleg_csv(month_transactions: list[dict], csv_delimiter
     )
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
-    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Tag"])
+    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Tag"])
     for t in getaggt:
-        writer.writerow([t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"], t.get("tag") or ""])
+        writer.writerow(
+            [t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"], t.get("counterparty") or "", t.get("tag") or ""]
+        )
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -283,9 +288,11 @@ def _build_offene_posten_csv(month_transactions: list[dict], csv_delimiter: str)
     )
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
-    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Status"])
+    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender", "Status"])
     for t in offen:
-        writer.writerow([t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"], label_de(t["status"])])
+        writer.writerow(
+            [t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"], t.get("counterparty") or "", label_de(t["status"])]
+        )
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -298,9 +305,11 @@ def _build_einzahlungen_csv(month_transactions: list[dict], csv_delimiter: str) 
     )
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
-    writer.writerow(["Datum", "Betrag", "Verwendungszweck"])
+    writer.writerow(["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender"])
     for t in einzahlungen:
-        writer.writerow([t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"]])
+        writer.writerow(
+            [t["date"].strftime("%d.%m.%Y"), f"{t['amount_raw']:.2f}", t["purpose"], t.get("counterparty") or ""]
+        )
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -507,10 +516,12 @@ def export_fiscal_year(
     (z.B. '2025-07_Juli' < '2025-12_Dezember' < '2026-01_Januar' <
     '2026-06_Juni') - keine zusaetzliche Umbenennung/Nummerierung noetig.
 
-    Erzeugt danach drei Jahres-Zusammenfassungen im Wurzelordner -
+    Erzeugt danach vier Jahres-Zusammenfassungen im Wurzelordner -
     00_Jahresuebersicht.csv (ALLE Buchungen), 00_Offene_Posten_Jahr.csv
-    (NUR Klaerungsbedarf) und 00_Jahresuebersicht.pdf (Deckblatt +
-    offene-Posten-Zusammenfassung zuerst + vollstaendige Monatsliste) -
+    (NUR Klaerungsbedarf), 00_Jahresuebersicht.pdf (Deckblatt +
+    offene-Posten-Zusammenfassung zuerst + vollstaendige Monatsliste) und
+    00_Einzahlungen_Jahr.pdf (NUR EINZAHLUNG-getaggte Buchungen des ganzen
+    Geschaeftsjahres, analog zu 05_Einzahlungen_Deposit.csv je Monat) -
     company_name/logo_path nur fuers PDF-Deckblatt, sonst ungenutzt.
 
     Prueft NICHT selbst auf offene Posten, verweigert den Export nie - das
@@ -544,7 +555,7 @@ def export_fiscal_year(
         on_progress(total_steps, total_steps, "Jahres-Zusammenfassungen werden erstellt ...")
 
     (year_root / "00_Jahresuebersicht.csv").write_bytes(
-        _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter, transactions)
+        _build_jahresuebersicht_csv(year_root, month_strs, csv_delimiter)
     )
     (year_root / "00_Offene_Posten_Jahr.csv").write_bytes(
         _build_offene_posten_jahr_csv(year_root, month_strs, csv_delimiter)
@@ -554,29 +565,26 @@ def export_fiscal_year(
             year_root, month_strs, fiscal_year_label(start_year, fiscal_config), csv_delimiter, company_name, logo_path
         )
     )
+    (year_root / "00_Einzahlungen_Jahr.pdf").write_bytes(
+        _build_einzahlungen_jahr_pdf(
+            year_root, month_strs, fiscal_year_label(start_year, fiscal_config), csv_delimiter, company_name, logo_path
+        )
+    )
 
     return year_root, warnings
 
 
-def _build_jahresuebersicht_csv(
-    year_root: Path, month_strs: list[str], csv_delimiter: str, transactions: list[dict]
-) -> bytes:
+def _build_jahresuebersicht_csv(year_root: Path, month_strs: list[str], csv_delimiter: str) -> bytes:
     """00_Jahresuebersicht.csv - fasst die bereits geschriebenen
     00_Uebersicht.csv ALLER 12 Monate (siehe export_fiscal_year) in einer
     Tabelle zusammen, ergaenzt um 'Monat' und 'Relativer Pfad zum
     Monatsordner' vorne dran, damit jede Zeile von der Jahresuebersicht aus
     zum passenden Beleg im jeweiligen Unterordner zurueckverfolgbar bleibt.
     Liest bewusst die bereits erzeugten Monatsdateien zurueck, statt Status/
-    Belegpfade ein zweites Mal aus den Transaktionen zu berechnen - so
-    bleiben Jahres- und Monatsuebersicht garantiert konsistent (gleiche
-    zentrale Status-Werte aus tx_status.py, einmal pro Monat berechnet).
-
-    'Empfänger/Absender' ist in der monatlichen 00_Uebersicht.csv NICHT
-    enthalten (deren Spalten sind fest vorgegeben, siehe dortiger
-    Docstring) - hier stattdessen direkt aus transactions nachgezogen und
-    per Position zugeordnet: _build_uebersicht_csv sortiert dieselbe
-    Monats-Teilmenge von transactions ebenfalls nur nach Datum (stabiler
-    Sort), die Reihenfolge ist also garantiert identisch."""
+    Belegpfade/Empfaenger ein zweites Mal aus den Transaktionen zu
+    berechnen - so bleiben Jahres- und Monatsuebersicht garantiert
+    konsistent (00_Uebersicht.csv enthaelt die Empfänger/Absender-Spalte
+    bereits, siehe dortiger Docstring, wird hier 1:1 uebernommen)."""
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=csv_delimiter, lineterminator="\n")
     writer.writerow(
@@ -590,11 +598,8 @@ def _build_jahresuebersicht_csv(
             continue
         text = month_csv_path.read_bytes().decode("utf-8-sig")
         rows = list(csv.reader(io.StringIO(text), delimiter=csv_delimiter))[1:]  # Kopfzeile ueberspringen
-        month_transactions = sorted(
-            (t for t in transactions if t["date"].strftime("%Y-%m") == month_str), key=lambda t: t["date"]
-        )
-        for row, t in zip(rows, month_transactions):
-            writer.writerow([month_str, folder_name, row[0], row[1], row[2], t.get("counterparty") or "", row[3], row[4], row[5]])
+        for row in rows:
+            writer.writerow([month_str, folder_name, *row])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -657,6 +662,87 @@ def _build_offene_posten_jahr_csv(year_root: Path, month_strs: list[str], csv_de
 def _pdf_cell(text, style) -> Paragraph:
     from xml.sax.saxutils import escape
     return Paragraph(escape(str(text)), style)
+
+
+def _build_einzahlungen_jahr_pdf(
+    year_root: Path,
+    month_strs: list[str],
+    year_label: str,
+    csv_delimiter: str,
+    company_name: str,
+    logo_path: Path | None,
+) -> bytes:
+    """00_Einzahlungen_Jahr.pdf - separate Jahres-PDF NUR mit den
+    EINZAHLUNG-getaggten Buchungen (Gegenstueck zu 05_Einzahlungen_Deposit.
+    csv je Monat, hier ueber das ganze Geschaeftsjahr zusammengefasst),
+    gruppiert nach Monat mit Zwischensumme, plus Gesamtsumme am Ende.
+    Liest wie _build_jahresuebersicht_pdf die bereits geschriebene
+    00_Jahresuebersicht.csv zurueck (MUSS daher danach aufgerufen werden),
+    damit Betrag/Empfänger/Tag garantiert dieselben Werte zeigen wie die
+    uebrigen Jahres-Zusammenfassungen."""
+    rows = _read_jahresuebersicht_rows(year_root, csv_delimiter)
+    einzahlungen_by_month: dict[str, list[list[str]]] = {m: [] for m in month_strs}
+    for row in rows:
+        if row[8] == "EINZAHLUNG":
+            einzahlungen_by_month.setdefault(row[0], []).append(row)
+
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle("cell", parent=styles["Normal"], fontSize=7, leading=9)
+    header_style = ParagraphStyle("header", parent=cell_style, textColor=colors.white, fontName="Helvetica-Bold")
+
+    def _table(header: list[str], data_rows: list[list[str]]) -> Table:
+        table_data = [[_pdf_cell(h, header_style) for h in header]]
+        for r in data_rows:
+            table_data.append([_pdf_cell(c, cell_style) for c in r])
+        tbl = Table(table_data, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#333333")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        return tbl
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4), topMargin=1.5 * cm, bottomMargin=1.5 * cm, leftMargin=1.5 * cm, rightMargin=1.5 * cm
+    )
+    story = []
+
+    if logo_path is not None:
+        logo_path = Path(logo_path)
+        if logo_path.exists():
+            try:
+                story.append(Image(str(logo_path), width=2.5 * cm, height=2.5 * cm))
+                story.append(Spacer(1, 1 * cm))
+            except Exception:
+                pass  # kaputte/nicht lesbare Logo-Datei soll den Export nicht verhindern
+    if company_name:
+        story.append(Paragraph(company_name, styles["Title"]))
+    story.append(Paragraph(f"Einzahlungen {year_label}", styles["Heading1"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph(f"Erstellt am {date_cls.today().strftime('%d.%m.%Y')}", styles["Normal"]))
+    story.append(Spacer(1, 0.5 * cm))
+
+    months_with_einzahlungen = [m for m in month_strs if einzahlungen_by_month.get(m)]
+    grand_total = 0.0
+    if not months_with_einzahlungen:
+        story.append(Paragraph("Keine Einzahlungen im gesamten Geschäftsjahr.", styles["Normal"]))
+    for month_str in months_with_einzahlungen:
+        month_rows = einzahlungen_by_month[month_str]
+        month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
+        month_total = sum(float(row[3]) for row in month_rows)
+        grand_total += month_total
+        story.append(Paragraph(f"{month_label} - Summe: {month_total:.2f}", styles["Heading2"]))
+        story.append(Spacer(1, 0.2 * cm))
+        detail_rows = [[row[2], row[3], row[4], row[5]] for row in month_rows]
+        story.append(_table(["Datum", "Betrag", "Verwendungszweck", "Empfänger/Absender"], detail_rows))
+        story.append(Spacer(1, 0.5 * cm))
+
+    if months_with_einzahlungen:
+        story.append(Paragraph(f"Gesamtsumme Einzahlungen {year_label}: {grand_total:.2f}", styles["Heading1"]))
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 def _build_jahresuebersicht_pdf(
