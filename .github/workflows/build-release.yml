@@ -121,7 +121,48 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO - wird in Schritt 3 ausgefuellt"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhaengigkeiten installieren (App + PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Platzhalter-.env anlegen
+        # Siehe Windows-Job - .env ist gitignored, desktop_app_qt_macos.spec
+        # verlangt sie trotzdem als Datendatei. .env.example hat nur
+        # Platzhalterwerte.
+        run: cp .env.example .env
+
+      - name: PyInstaller (macOS, .app-Bundle) ausfuehren
+        run: pyinstaller build/desktop_app_qt_macos.spec --clean --noconfirm --workpath .pyinstaller-work
+
+      # Ohne Apple-Entwicklerkonto/Codesigning (siehe Kommentar in
+      # desktop_app_qt_macos.spec) zeigt Gatekeeper beim ersten Start des
+      # gebauten .app-Bundles eine Warnung ("nicht verifizierter
+      # Entwickler") - bekannt und fuers Erste akzeptiert, aehnlich der
+      # Windows-Smart-App-Control-Situation dieses Projekts. Notarisierung
+      # waere ein spaeterer Schritt, sobald ein Apple-Entwicklerkonto
+      # vorhanden ist.
+      - name: .app-Bundle als ZIP packen
+        # macOS-Apps werden ueblicherweise als ZIP verteilt, nicht direkt
+        # als .app (u.a. weil ein einzelnes .app beim Download durch den
+        # Browser/Quarantaene-Flag anders behandelt wird) - ditto statt
+        # zip, da es Bundle-Struktur/Resource-Forks korrekt erhaelt (von
+        # Apple fuer genau diesen Zweck empfohlen).
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          ditto -c -k --sequesterRsrc --keepParent "dist/PaperlessSyncQt.app" "PaperlessSyncQt-${VERSION}-macos.zip"
+
+      - name: macOS-ZIP als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: PaperlessSyncQt-*-macos.zip
+          if-no-files-found: error
 
   linux-build:
     name: Linux-Build
