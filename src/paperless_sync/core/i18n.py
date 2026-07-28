@@ -367,4 +367,13 @@ _EN: dict[str, str] = {
     "ZIP fehlgeschlagen": "ZIP failed",
     "ZIP gespeichert": "ZIP saved",
     "ZIP gespeichert: {zip_path}": "ZIP saved: {zip_path}",
+
+    # --- Aufgehobene Zuordnung (geloeschtes Paperless-Dokument) ------------
+    "Zuordnung aufgehoben": "Assignment removed",
+    "Bei {count} zugeordnete(n) Beleg(en) wurde das verknüpfte Paperless-Dokument nicht mehr "
+    "gefunden (vermutlich dort gelöscht). Die Zuordnung wurde deshalb aufgehoben, die Buchung(en) "
+    "sind jetzt wieder als offen markiert und müssen neu zugeordnet werden:\n\n{details}":
+        "For {count} linked receipt(s), the connected Paperless document could no longer be found "
+        "(likely deleted there). The assignment was therefore removed, and the transaction(s) are now "
+        "marked open again and need to be re-assigned:\n\n{details}",
 }

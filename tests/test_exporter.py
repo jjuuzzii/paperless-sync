@@ -178,15 +178,41 @@ def test_refresh_and_check_matched_documents_reports_deleted_document():
     client = FakePaperlessClient(missing_ids={1})
     tx = make_transaction(
         display_number="003",
+        status=TxStatus.MATCHED,
         matched_docs=[{"id": 1, "title": "Geloescht.pdf", "original_file_name": "geloescht.pdf", "correspondent_name": None}],
     )
     warnings, missing_ids = refresh_and_check_matched_documents([tx], client)
     assert missing_ids == {1}
     assert len(warnings) == 1
     assert "#003" in warnings[0]
-    # Bei einem fehlenden Dokument bleibt der alte Schnappschuss unangetastet
-    # (kein Update auf Basis nicht vorhandener Daten).
-    assert tx["matched_docs"][0]["title"] == "Geloescht.pdf"
+    # Die Zuordnung zum fehlenden Dokument wird entfernt, ein Hinweis
+    # gesetzt, und die Buchung faellt (da keine matched_docs mehr uebrig
+    # sind) auf UNRESOLVED zurueck - dieselbe Logik wie beim manuellen
+    # "Rueckgaengig".
+    assert tx["matched_docs"] == []
+    assert tx["status"] == TxStatus.UNRESOLVED
+    assert "geloescht.pdf" in tx["note"]
+    assert "aufgehoben" in tx["note"]
+
+
+def test_refresh_and_check_matched_documents_keeps_status_if_other_doc_remains():
+    # Sammelabbuchung mit zwei Belegen - nur EINER ist geloescht, der
+    # andere bleibt gueltig -> Buchung bleibt MATCHED, nur der fehlende
+    # Beleg verschwindet aus matched_docs.
+    client = FakePaperlessClient({2: b"still here"}, missing_ids={1})
+    tx = make_transaction(
+        status=TxStatus.MATCHED,
+        matched_docs=[
+            {"id": 1, "title": "Geloescht.pdf", "original_file_name": "geloescht.pdf", "correspondent_name": None},
+            {"id": 2, "title": "Alt.pdf", "original_file_name": "alt.pdf", "correspondent_name": None},
+        ],
+    )
+    warnings, missing_ids = refresh_and_check_matched_documents([tx], client)
+    assert missing_ids == {1}
+    assert len(warnings) == 1
+    assert len(tx["matched_docs"]) == 1
+    assert tx["matched_docs"][0]["id"] == 2
+    assert tx["status"] == TxStatus.MATCHED  # noch ein gueltiger Beleg vorhanden
 
 
 def test_generate_export_reports_missing_document_exactly_once_not_twice(tmp_path):
@@ -202,10 +228,13 @@ def test_generate_export_reports_missing_document_exactly_once_not_twice(tmp_pat
         tmp_path, "2026-03", [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", client,
     )
     assert len(warnings) == 1
-    # Buchung wird trotzdem exportiert, nur ohne Beleg-PDF
+    # Buchung wird trotzdem exportiert, aber ohne Beleg-PDF und mit auf
+    # "Offen" zurueckgefallenem Status (Zuordnung wurde aufgehoben).
+    assert tx["status"] == TxStatus.UNRESOLVED
     uebersicht_rows = _rows((Path(export_root) / "00_Uebersicht.csv").read_bytes())
     assert len(uebersicht_rows) - 1 == 1
     assert uebersicht_rows[1][3] == ""  # kein Beleg-Pfad, da Dokument fehlt
+    assert uebersicht_rows[1][4] == "Offen"
 
 
 # --- CSV-Bausteine --------------------------------------------------------

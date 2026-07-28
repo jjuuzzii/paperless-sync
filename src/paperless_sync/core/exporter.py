@@ -329,26 +329,41 @@ def refresh_and_check_matched_documents(transactions: list[dict], client) -> tup
     in Paperless wuerde ihn sonst nie aktualisieren, das Doc-Pill in der UI
     zeigte dauerhaft den alten Namen.
 
+    Ein nicht mehr gefundenes Dokument (z.B. in Paperless geloescht) wird
+    aus tx['matched_docs'] ENTFERNT und tx['note'] mit einem erklaerenden
+    Hinweis versehen, statt die Buchung weiterhin faelschlich mit einer
+    toten Verknuepfung als erledigt zu zeigen. Bleiben danach keine
+    matched_docs mehr uebrig (und wurde kein PDF direkt hochgeladen),
+    faellt die Buchung auf UNRESOLVED zurueck - exakt dieselbe Bedingung
+    wie beim manuellen "Rueckgaengig" (siehe desktop_controller.
+    on_remove_uploaded_pdf/on_undo_match), damit tx['status'] konsistent
+    bleibt egal auf welchem Weg eine Zuordnung verschwindet.
+
     Rueckgabe: (warnings, missing_ids) - warnings sind deutschsprachige
-    Meldungen fuer jedes Dokument, das nicht mehr gefunden wurde (z.B. in
-    Paperless geloescht, siehe generate_export-Docstring, der Export wird
-    dadurch NICHT verweigert). missing_ids wird an _export_receipts
-    weitergereicht, damit dort kein zweiter (redundanter) Download-
-    Versuch fuer bereits hier als fehlend erkannte Dokumente unternommen
-    wird - sonst gaebe es fuer dasselbe fehlende Dokument zwei Meldungen."""
+    Meldungen fuer jedes entfernte Dokument (der Export wird dadurch
+    NICHT verweigert, siehe generate_export-Docstring). missing_ids wird
+    an _export_receipts weitergereicht (Sicherheitsnetz fuer den seltenen
+    Fall, dass ein Dokument die Metadaten-Pruefung uebersteht, der
+    tatsaechliche Beleg-Download aber trotzdem fehlschlaegt)."""
     correspondents_by_id: dict | None = None
     warnings: list[str] = []
     missing_ids: set = set()
     for tx in transactions:
-        for doc in tx.get("matched_docs") or []:
+        matched_docs = tx.get("matched_docs") or []
+        if not matched_docs:
+            continue
+        remaining_docs = []
+        removed_names = []
+        for doc in matched_docs:
             try:
                 fresh = client.get_document(doc["id"])
             except Exception as exc:
                 missing_ids.add(doc["id"])
                 name = doc.get("original_file_name") or doc.get("title") or f"Paperless-ID {doc['id']}"
+                removed_names.append(name)
                 warnings.append(
                     f"Buchung #{tx.get('display_number') or tx['id']}: Dokument '{name}' (Paperless-ID {doc['id']}) "
-                    f"wurde nicht gefunden - moeglicherweise in Paperless geloescht ({exc})."
+                    f"wurde nicht gefunden - moeglicherweise in Paperless geloescht. Zuordnung wurde aufgehoben ({exc})."
                 )
                 continue
             if correspondents_by_id is None:
@@ -359,6 +374,19 @@ def refresh_and_check_matched_documents(transactions: list[dict], client) -> tup
             doc["title"] = fresh.get("title")
             doc["original_file_name"] = fresh.get("original_file_name")
             doc["correspondent_name"] = correspondents_by_id.get(fresh.get("correspondent"))
+            remaining_docs.append(doc)
+
+        if removed_names:
+            tx["matched_docs"] = remaining_docs
+            tx["note"] = (
+                f"Zugeordnete(r) Beleg(e) ({', '.join(removed_names)}) wurde(n) in Paperless nicht mehr "
+                f"gefunden - Zuordnung wurde deshalb aufgehoben. Bitte neu zuordnen."
+            )
+            # Gleiche Bedingung wie beim manuellen "Rueckgaengig" - direkt
+            # hochgeladene PDFs (uploaded_bytes) haben nie matched_docs und
+            # duerfen hier nicht faelschlich zurueckgesetzt werden.
+            if not remaining_docs and not tx.get("uploaded_bytes") and tx["status"] == TxStatus.MATCHED:
+                tx["status"] = TxStatus.UNRESOLVED
     return warnings, missing_ids
 
 

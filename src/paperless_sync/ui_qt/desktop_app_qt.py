@@ -1773,18 +1773,21 @@ class DesktopAppQt(QMainWindow):
         )
 
     def _show_missing_document_warnings(self, warnings: list[str]):
-        """Zeigt Belege an, die beim Export nicht mehr in Paperless gefunden
-        wurden (siehe exporter.refresh_and_check_matched_documents) - der
-        Export selbst ist trotzdem vollstaendig durchgelaufen, das ist nur
-        eine Information zum Nachpruefen."""
+        """Zeigt Buchungen an, deren zugeordnetes Dokument nicht mehr in
+        Paperless gefunden wurde (vermutlich dort geloescht) - die
+        Zuordnung wurde deshalb bereits automatisch aufgehoben (siehe
+        exporter.refresh_and_check_matched_documents), die Buchung faellt
+        auf 'Offen' zurueck und muss neu zugeordnet werden. Der Export
+        selbst ist trotzdem vollstaendig durchgelaufen."""
         if not warnings:
             return
         QMessageBox.warning(
             self,
-            tr("Belege nicht gefunden"),
+            tr("Zuordnung aufgehoben"),
             tr(
-                "{count} zugeordnete(r) Beleg(e) konnte(n) nicht mehr in Paperless gefunden werden "
-                "(vermutlich dort gelöscht) und fehlen deshalb im Export:\n\n{details}",
+                "Bei {count} zugeordnete(n) Beleg(en) wurde das verknüpfte Paperless-Dokument nicht mehr "
+                "gefunden (vermutlich dort gelöscht). Die Zuordnung wurde deshalb aufgehoben, die Buchung(en) "
+                "sind jetzt wieder als offen markiert und müssen neu zugeordnet werden:\n\n{details}",
                 count=len(warnings),
                 details="\n".join(warnings),
             ),
