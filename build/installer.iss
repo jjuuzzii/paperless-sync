@@ -59,3 +59,20 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} jetzt starten"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // Alten _internal-Ordner (PyInstaller-Onedir-Abhaengigkeiten) VOR dem
+  // Kopieren der neuen Dateien komplett entfernen. Inno Setup ueberschreibt
+  // ueber [Files] nur vorhandene Dateien, loescht aber nie verwaiste alte
+  // Dateien einer frueheren Version - aendert sich zwischen Versionen die
+  // Paketstruktur einer Abhaengigkeit (z.B. pyarrow/pandas), kann sonst eine
+  // kaputte Mischinstallation aus altem+neuem _internal entstehen (siehe
+  // "AttributeError: module 'pyarrow' has no attribute '__version__'" -
+  // behoben durch Deinstallieren+Neuinstallieren, also genau dieses Problem).
+  if CurStep = ssInstall then
+  begin
+    DelTree(ExpandConstant('{app}\_internal'), True, True, True);
+  end;
+end;
