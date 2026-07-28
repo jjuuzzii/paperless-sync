@@ -1,0 +1,89 @@
+name: Build & Release
+
+# Schritt 1 (Grundgeruest): Trigger bei einem Versions-Tag (v1.2.0 usw.),
+# zusaetzlich manuell ueber workflow_dispatch ausloesbar, um die komplette
+# Kette (drei Build-Jobs + Release) zu testen, ohne einen echten Tag zu
+# setzen - siehe check-version fuer den Unterschied im Ablauf.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+jobs:
+  check-version:
+    name: Versionscheck
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version ermitteln (und bei einem Tag-Push gegen version.py pruefen)
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Zentrale Versionsnummer liegt in version.py im Repo-Root (NICHT
+          # src/paperless_sync/__init__.py - das Package-__init__ hat keine
+          # eigene __version__, siehe CLAUDE.md-Modulliste).
+          FILE_VERSION=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('version.py').read()).group(1))")
+          echo "In version.py gefundene Version: $FILE_VERSION"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            TAG_VERSION="${TAG_NAME#v}"
+            echo "Getaggte Version (aus Tag '$TAG_NAME'): $TAG_VERSION"
+            if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+              echo "::error::Tag '$TAG_NAME' (Version $TAG_VERSION) stimmt nicht mit version.py ($FILE_VERSION) ueberein - Abbruch, um kein falsch beschriftetes Release zu veroeffentlichen. version.py vor dem Taggen anpassen (und den Tag ggf. neu setzen)."
+              exit 1
+            fi
+            VERSION="$TAG_VERSION"
+          else
+            # workflow_dispatch: kein echter Tag vorhanden (siehe Schritt 7 -
+            # manueller Testlauf), daher kein Vergleich moeglich/noetig -
+            # die Version aus version.py wird direkt uebernommen.
+            VERSION="$FILE_VERSION"
+            echo "Manueller Testlauf (workflow_dispatch) - keine Tag-Pruefung, Version direkt aus version.py: $VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if echo "$VERSION" | grep -qE -- '-(beta|rc)'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Versionssuffix erkannt -> wird als Pre-release veroeffentlicht."
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows-build:
+    name: Windows-Build
+    needs: check-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO - wird in Schritt 2 ausgefuellt"
+
+  macos-build:
+    name: macOS-Build
+    needs: check-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO - wird in Schritt 3 ausgefuellt"
+
+  linux-build:
+    name: Linux-Build
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO - wird in Schritt 4 ausgefuellt"
+
+  release:
+    name: GitHub Release erstellen
+    needs: [check-version, windows-build, macos-build, linux-build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO - wird in Schritt 5 ausgefuellt"
