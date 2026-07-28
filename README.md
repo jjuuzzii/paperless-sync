@@ -53,6 +53,8 @@ The app learns as you go: once you tag a recurring transaction (e.g. a subscript
 
 Download the latest installer from the [Releases](../../releases) page and run it. `Paperless Sync` will appear in your Start menu.
 
+> **Windows flags the installer as unrecognized ("Smart App Control" / SmartScreen blocked this app)?** This is expected for an app from an unverified (non-code-signed) publisher, not a sign of a bad download. Click **"More info" → "Run anyway"** in the SmartScreen prompt, or if Smart App Control has blocked it outright: right-click the downloaded `.exe` → **Properties** → check **"Unblock"** at the bottom → **OK**, then run it again.
+
 ### macOS
 
 No packaged release yet — build and run from source (see below). Requires Python 3.12+ (`brew install python@3.12` if you don't have it). The `.app`-bundle build path (`build/desktop_app_qt_macos.spec`) exists but is untested on real hardware; without code signing, Gatekeeper will likely flag the built app as being from an unverified developer, similar to the Windows Smart App Control situation.
