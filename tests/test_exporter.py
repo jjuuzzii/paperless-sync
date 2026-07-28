@@ -38,6 +38,7 @@ from paperless_sync.core.exporter import (
     generate_export,
     get_fiscal_year_months,
     month_folder_name,
+    refresh_and_check_matched_documents,
     zip_export_folder,
 )
 from paperless_sync.core.match_candidate import MatchCandidate, MatchReasonType
@@ -118,15 +119,93 @@ def test_receipt_filename_multi_suffix_for_multiple_docs_same_booking():
 
 def test_get_pdf_files_uploaded_bytes_takes_precedence():
     tx = make_transaction(uploaded_bytes=b"%PDF upload", uploaded_name="upload.pdf", matched_docs=[{"id": 1, "original_file_name": "x.pdf"}])
-    files = _get_pdf_files(tx, client=None)
+    files, errors = _get_pdf_files(tx, client=None)
     assert files == [(b"%PDF upload", "upload.pdf")]
+    assert errors == []
 
 
 def test_get_pdf_files_downloads_matched_docs_from_client():
     client = FakePaperlessClient({1: b"doc-1-bytes", 2: b"doc-2-bytes"})
     tx = make_transaction(matched_docs=[{"id": 1, "original_file_name": "a.pdf"}, {"id": 2, "original_file_name": "b.pdf"}])
-    files = _get_pdf_files(tx, client)
+    files, errors = _get_pdf_files(tx, client)
     assert files == [(b"doc-1-bytes", "a.pdf"), (b"doc-2-bytes", "b.pdf")]
+    assert errors == []
+
+
+def test_get_pdf_files_skips_missing_document_and_reports_it():
+    client = FakePaperlessClient({1: b"doc-1-bytes"}, missing_ids={2})
+    tx = make_transaction(
+        display_number="005",
+        matched_docs=[{"id": 1, "original_file_name": "a.pdf"}, {"id": 2, "original_file_name": "b.pdf"}],
+    )
+    files, errors = _get_pdf_files(tx, client)
+    assert files == [(b"doc-1-bytes", "a.pdf")]  # das vorhandene Dokument wird trotzdem geliefert
+    assert len(errors) == 1
+    assert "#005" in errors[0]
+    assert "b.pdf" in errors[0] or "2" in errors[0]
+
+
+def test_get_pdf_files_skips_already_known_missing_id_without_second_warning():
+    # missing_ids-Parameter (von refresh_and_check_matched_documents
+    # befuellt) - fuer ein dort bereits erkanntes fehlendes Dokument darf
+    # HIER kein zweiter Download-Versuch/keine zweite Meldung entstehen.
+    client = FakePaperlessClient({1: b"doc-1-bytes"})
+    tx = make_transaction(
+        matched_docs=[{"id": 1, "original_file_name": "a.pdf"}, {"id": 2, "original_file_name": "b.pdf"}],
+    )
+    files, errors = _get_pdf_files(tx, client, missing_ids={2})
+    assert files == [(b"doc-1-bytes", "a.pdf")]
+    assert errors == []  # keine Meldung - die kam schon vom Check-Schritt
+
+
+# --- refresh_and_check_matched_documents ------------------------------------
+
+def test_refresh_and_check_matched_documents_updates_stale_title_and_filename():
+    # Simuliert ein in Paperless umbenanntes Dokument - der Schnappschuss
+    # in matched_docs zeigt noch den alten Namen.
+    client = FakePaperlessClient({1: b"irrelevant"})
+    tx = make_transaction(
+        matched_docs=[{"id": 1, "title": "Alter Titel", "original_file_name": "alt.pdf", "correspondent_name": None}],
+    )
+    warnings, missing_ids = refresh_and_check_matched_documents([tx], client)
+    assert warnings == []
+    assert missing_ids == set()
+    assert tx["matched_docs"][0]["title"] == "Beleg1"  # FakePaperlessClient.get_document() liefert diesen Titel
+    assert tx["matched_docs"][0]["original_file_name"] == "beleg1.pdf"
+
+
+def test_refresh_and_check_matched_documents_reports_deleted_document():
+    client = FakePaperlessClient(missing_ids={1})
+    tx = make_transaction(
+        display_number="003",
+        matched_docs=[{"id": 1, "title": "Geloescht.pdf", "original_file_name": "geloescht.pdf", "correspondent_name": None}],
+    )
+    warnings, missing_ids = refresh_and_check_matched_documents([tx], client)
+    assert missing_ids == {1}
+    assert len(warnings) == 1
+    assert "#003" in warnings[0]
+    # Bei einem fehlenden Dokument bleibt der alte Schnappschuss unangetastet
+    # (kein Update auf Basis nicht vorhandener Daten).
+    assert tx["matched_docs"][0]["title"] == "Geloescht.pdf"
+
+
+def test_generate_export_reports_missing_document_exactly_once_not_twice(tmp_path):
+    # End-zu-Ende ueber generate_export: ein geloeschtes Dokument darf NUR
+    # einmal in den Warnungen auftauchen (Check-Schritt), nicht zusaetzlich
+    # nochmal beim eigentlichen Beleg-Download (siehe missing_ids-Weitergabe).
+    tx = make_transaction(
+        id_="001", date_=date(2026, 3, 5), status=TxStatus.MATCHED, row_index=None,
+        matched_docs=[{"id": 1, "title": "Geloescht.pdf", "original_file_name": "geloescht.pdf", "correspondent_name": None}],
+    )
+    client = FakePaperlessClient(missing_ids={1})
+    export_root, warnings = generate_export(
+        tmp_path, "2026-03", [tx], pd.DataFrame({"Datum": [], "Betrag": []}), ";", client,
+    )
+    assert len(warnings) == 1
+    # Buchung wird trotzdem exportiert, nur ohne Beleg-PDF
+    uebersicht_rows = _rows((Path(export_root) / "00_Uebersicht.csv").read_bytes())
+    assert len(uebersicht_rows) - 1 == 1
+    assert uebersicht_rows[1][3] == ""  # kein Beleg-Pfad, da Dokument fehlt
 
 
 # --- CSV-Bausteine --------------------------------------------------------
@@ -234,8 +313,9 @@ def test_generate_export_full_month_all_statuses(tmp_path, full_month_transactio
         tx["row_index"] = i
     client = FakePaperlessClient({1: b"%PDF-1.4 fake receipt"})
 
-    export_root = generate_export(tmp_path, "2026-01", full_month_transactions, csv_df, ";", client)
+    export_root, warnings = generate_export(tmp_path, "2026-01", full_month_transactions, csv_df, ";", client)
 
+    assert warnings == []
     assert export_root == tmp_path / "2026-01_Januar"
     assert (export_root / "00_Uebersicht.csv").exists()
     assert (export_root / "01_Belege_zugeordnet").is_dir()
@@ -267,7 +347,7 @@ def test_generate_export_zip_and_reopen_relative_paths_resolve(tmp_path, full_mo
         tx["row_index"] = i
     client = FakePaperlessClient({1: b"%PDF-1.4 fake receipt"})
 
-    export_root = generate_export(tmp_path, "2026-01", full_month_transactions, csv_df, ";", client)
+    export_root, _warnings = generate_export(tmp_path, "2026-01", full_month_transactions, csv_df, ";", client)
 
     zip_path = tmp_path / "export.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
@@ -292,7 +372,7 @@ def test_generate_export_only_includes_transactions_from_requested_month(tmp_pat
     feb_tx = make_transaction(id_="002", date_=date(2026, 2, 5), status=TxStatus.UNRESOLVED, row_index=1)
     csv_df = pd.DataFrame({"Datum": ["05.01.2026", "05.02.2026"], "Betrag": ["x", "x"]})
     client = FakePaperlessClient()
-    export_root = generate_export(tmp_path, "2026-01", [jan_tx, feb_tx], csv_df, ";", client)
+    export_root, _warnings = generate_export(tmp_path, "2026-01", [jan_tx, feb_tx], csv_df, ";", client)
     rows = _rows((export_root / "00_Uebersicht.csv").read_bytes())
     assert len(rows) - 1 == 1
 
@@ -341,7 +421,7 @@ def test_export_fiscal_year_calendar_year_creates_all_12_month_folders(tmp_path)
     csv_df = pd.DataFrame({"Datum": [], "Betrag": []})
     client = FakePaperlessClient()
 
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, {"calendar_year": True, "start_month": 7}, transactions, csv_df, ";", client
     )
 
@@ -385,7 +465,7 @@ def test_export_fiscal_year_deviating_fiscal_year_spans_calendar_years(tmp_path)
     csv_df = pd.DataFrame({"Datum": [], "Betrag": []})
     client = FakePaperlessClient()
 
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2025, {"calendar_year": False, "start_month": 7}, transactions, csv_df, ";", client
     )
 
@@ -408,7 +488,7 @@ def test_export_fiscal_year_regenerates_months_from_scratch(tmp_path):
         make_transaction(id_="001", date_=date(2026, 3, 5), status=TxStatus.MATCHED, row_index=None),
         make_transaction(id_="002", date_=date(2026, 3, 15), status=TxStatus.UNRESOLVED, row_index=None),
     ]
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, {"calendar_year": True}, fresh_transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient()
     )
     new_uebersicht = _rows((year_root / "2026-03_Maerz" / "00_Uebersicht.csv").read_bytes())
@@ -482,7 +562,7 @@ def test_export_fiscal_year_writes_jahresuebersicht_with_all_transactions(tmp_pa
     ]
     client = FakePaperlessClient({1: b"%PDF-1.4 fake"})
 
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, {"calendar_year": True}, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", client
     )
 
@@ -610,7 +690,7 @@ def test_export_fiscal_year_writes_all_three_summary_files(tmp_path):
         make_transaction(id_="001", date_=date(2026, 2, 10), status=TxStatus.UNRESOLVED, row_index=None),
         make_transaction(id_="002", date_=date(2026, 5, 5), status=TxStatus.MATCHED, row_index=None),
     ]
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, {"calendar_year": True}, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";",
         FakePaperlessClient(), company_name="Musterfirma GmbH", logo_path=None,
     )
@@ -654,7 +734,7 @@ def test_fiscal_year_open_items_appear_correctly_across_months_calendar_year(tmp
     assert total_open == 4
     assert months_with_open == ["Februar 2026", "März 2026", "Juni 2026"]
 
-    year_root = export_fiscal_year(
+    year_root, _warnings = export_fiscal_year(
         tmp_path, 2026, fiscal_config, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient(),
     )
 
@@ -693,7 +773,7 @@ def test_fiscal_year_open_items_across_calendar_year_boundary_deviating_fiscal_y
     assert total_open == 4
     assert set(months_with_open) == {"Februar 2026", "März 2026", "Juni 2026"}
 
-    year_root = export_fiscal_year(tmp_path, 2025, fiscal_config, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
+    year_root, _warnings = export_fiscal_year(tmp_path, 2025, fiscal_config, transactions, pd.DataFrame({"Datum": [], "Betrag": []}), ";", FakePaperlessClient())
     assert year_root.name == "Jahresexport_2025-2026"
     assert (year_root / "2025-07_Juli").is_dir()
     assert (year_root / "2026-02_Februar").is_dir()

@@ -470,15 +470,24 @@ class Controller:
         self.state.persist_session()
 
     # --- Export ------------------------------------------------
-    def on_generate_export_click(self, month: str) -> Path:
+    def on_generate_export_click(self, month: str) -> tuple[Path, list[str]]:
+        """Rueckgabe: (export_root, warnings) - warnings zu Belegen, die
+        nicht mehr in Paperless gefunden wurden (siehe exporter.
+        generate_export). Aktualisiert nebenbei zwischengespeicherte
+        Titel/Dateinamen noch vorhandener Dokumente - deshalb
+        persist_session() danach, sonst ginge die Aktualisierung beim
+        naechsten Neustart wieder verloren."""
         state = self.state
         if not state.transactions:
             raise RuntimeError("Keine Transaktionen zum Exportieren vorhanden.")
-        return generate_export(
+        export_root, warnings = generate_export(
             state.get_export_base_dir(), month, state.transactions, state.csv_df, state.csv_delimiter, state.client
         )
+        state.persist_session()
+        return export_root, warnings
 
-    def on_export_fiscal_year_click(self, start_year: int, on_progress=None) -> Path:
+    def on_export_fiscal_year_click(self, start_year: int, on_progress=None) -> tuple[Path, list[str]]:
+        """Rueckgabe: (year_root, warnings) - siehe on_generate_export_click."""
         state = self.state
         if not state.transactions:
             raise RuntimeError("Keine Transaktionen zum Exportieren vorhanden.")
@@ -487,7 +496,7 @@ class Controller:
             candidate = state.base_dir / state.config["company_icon_path"]
             if candidate.exists():
                 logo_path = candidate
-        return export_fiscal_year(
+        year_root, warnings = export_fiscal_year(
             state.get_export_base_dir(),
             start_year,
             state.config.get("fiscal_year", {}),
@@ -499,6 +508,8 @@ class Controller:
             logo_path=logo_path,
             on_progress=on_progress,
         )
+        state.persist_session()
+        return year_root, warnings
 
     # --- Hilfsfunktionen ------------------------------------------------
     def _find_tx(self, transaction_id: str) -> dict:

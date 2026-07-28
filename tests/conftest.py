@@ -27,13 +27,33 @@ class FakeUpload:
 
 class FakePaperlessClient:
     """Ersetzt paperless_client.PaperlessClient in exporter-Tests - liefert
-    feste PDF-Bytes statt eines echten Downloads, kein Netzwerk noetig."""
+    feste PDF-Bytes statt eines echten Downloads, kein Netzwerk noetig.
+    missing_ids: Dokument-IDs, die absichtlich NICHT (mehr) gefunden werden
+    sollen (simuliert ein in Paperless geloeschtes Dokument) - sowohl
+    download_document als auch get_document schlagen dafuer fehl, alle
+    anderen IDs funktionieren unveraendert wie bisher."""
 
-    def __init__(self, documents: dict | None = None):
+    def __init__(self, documents: dict | None = None, missing_ids: set | None = None):
         self._documents = documents or {}
+        self._missing_ids = missing_ids or set()
 
     def download_document(self, doc_id: int) -> bytes:
+        if doc_id in self._missing_ids:
+            raise Exception(f"Dokument {doc_id} nicht gefunden (404)")
         return self._documents.get(doc_id, b"%PDF-1.4 fake receipt content")
+
+    def get_document(self, doc_id: int) -> dict:
+        if doc_id in self._missing_ids:
+            raise Exception(f"Dokument {doc_id} nicht gefunden (404)")
+        return {
+            "id": doc_id,
+            "title": f"Beleg{doc_id}",
+            "original_file_name": f"beleg{doc_id}.pdf",
+            "correspondent": None,
+        }
+
+    def get_correspondents(self) -> list[dict]:
+        return []
 
 
 def make_transaction(

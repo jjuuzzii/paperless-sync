@@ -165,37 +165,65 @@ def _receipt_filename(tx: dict, multi_suffix: str, used_names: set[str]) -> str:
     return _dedupe_filename(base, ".pdf", used_names)
 
 
-def _get_pdf_files(tx: dict, client) -> list[tuple[bytes, str]]:
-    """Liefert [(pdf_bytes, original_dateiname), ...] fuer eine erfolgreich
-    zugeordnete Transaktion - entweder direkt vom Nutzer hochgeladen (immer
-    genau eine Datei, siehe tx['uploaded_bytes']) oder ein oder mehrere aus
-    Paperless heruntergeladene Dokumente (z.B. bei einer Sammelabbuchung mit
-    mehreren Einzelrechnungen, siehe tx['matched_docs']). uploaded_bytes
-    entscheidet bewusst statt tx['status']: TxStatus.MATCHED deckt beide
-    Faelle ab (siehe tx_status.py)."""
-    if tx.get("uploaded_bytes"):
-        return [(tx["uploaded_bytes"], tx["uploaded_name"] or "beleg.pdf")]
+def _get_pdf_files(tx: dict, client, missing_ids: set | None = None) -> tuple[list[tuple[bytes, str]], list[str]]:
+    """Liefert ([(pdf_bytes, original_dateiname), ...], [Fehlermeldungen])
+    fuer eine erfolgreich zugeordnete Transaktion - entweder direkt vom
+    Nutzer hochgeladen (immer genau eine Datei, siehe tx['uploaded_bytes'])
+    oder ein oder mehrere aus Paperless heruntergeladene Dokumente (z.B. bei
+    einer Sammelabbuchung mit mehreren Einzelrechnungen, siehe
+    tx['matched_docs']). uploaded_bytes entscheidet bewusst statt
+    tx['status']: TxStatus.MATCHED deckt beide Faelle ab (siehe
+    tx_status.py).
 
+    missing_ids (optional): bereits durch refresh_and_check_matched_
+    documents als fehlend erkannte Dokument-IDs - werden hier still
+    uebersprungen (kein zweiter Download-Versuch, keine doppelte
+    Fehlermeldung fuer dasselbe Dokument). Ein DARUEBER HINAUS
+    fehlgeschlagenes Dokument (z.B. erst hier beim Download entdeckt)
+    bricht trotzdem NICHT den ganzen Export ab - es wird uebersprungen und
+    als Fehlermeldung zurueckgegeben, die uebrigen Belege der Buchung (und
+    alle anderen Buchungen) werden trotzdem exportiert."""
+    if tx.get("uploaded_bytes"):
+        return [(tx["uploaded_bytes"], tx["uploaded_name"] or "beleg.pdf")], []
+
+    missing_ids = missing_ids or set()
     files = []
+    errors = []
     for doc in tx.get("matched_docs") or []:
-        pdf_bytes = client.download_document(doc["id"])
+        if doc["id"] in missing_ids:
+            continue
+        try:
+            pdf_bytes = client.download_document(doc["id"])
+        except Exception as exc:
+            name = doc.get("original_file_name") or doc.get("title") or f"Paperless-ID {doc['id']}"
+            errors.append(
+                f"Buchung #{tx.get('display_number') or tx['id']}: Beleg '{name}' (Paperless-ID {doc['id']}) "
+                f"konnte nicht heruntergeladen werden - moeglicherweise in Paperless geloescht ({exc})."
+            )
+            continue
         original_name = doc.get("original_file_name") or f"{doc.get('title') or doc['id']}.pdf"
         files.append((pdf_bytes, original_name))
-    return files
+    return files, errors
 
 
 def _export_receipts(
-    month_transactions: list[dict], belege_dir: Path, client
-) -> dict[str, list[str]]:
+    month_transactions: list[dict], belege_dir: Path, client, missing_ids: set | None = None
+) -> tuple[dict[str, list[str]], list[str]]:
     """Schreibt alle Beleg-PDFs nach 01_Belege_zugeordnet/ und gibt
-    {tx_id: [relative_pfad, ...]} zurueck - fuer die 'Zugeordneter Beleg'-
-    Spalte in 00_Uebersicht.csv (Anforderung 8: relative Pfade)."""
+    ({tx_id: [relative_pfad, ...]}, [Fehlermeldungen]) zurueck - Ersteres
+    fuer die 'Zugeordneter Beleg'-Spalte in 00_Uebersicht.csv (Anforderung
+    8: relative Pfade), Letzteres fuer Belege, die nicht heruntergeladen
+    werden konnten (siehe _get_pdf_files) - der Export laeuft dafuer
+    trotzdem vollstaendig durch, die Meldungen werden der aufrufenden
+    UI-Schicht nur zur Information zurueckgegeben."""
     receipt_paths: dict[str, list[str]] = {}
+    warnings: list[str] = []
     used_names: set[str] = set()
     for tx in month_transactions:
         if tx["status"] != TxStatus.MATCHED:
             continue
-        pdf_files = _get_pdf_files(tx, client)
+        pdf_files, errors = _get_pdf_files(tx, client, missing_ids)
+        warnings.extend(errors)
         multiple = len(pdf_files) > 1
         paths = []
         for idx, (pdf_bytes, _original_name) in enumerate(pdf_files, start=1):
@@ -204,7 +232,7 @@ def _export_receipts(
             (belege_dir / filename).write_bytes(pdf_bytes)
             paths.append(f"01_Belege_zugeordnet/{filename}")
         receipt_paths[tx["id"]] = paths
-    return receipt_paths
+    return receipt_paths, warnings
 
 
 def _build_uebersicht_csv(
@@ -292,6 +320,48 @@ def _build_kontoauszug_csv(month_transactions: list[dict], csv_df, csv_delimiter
     return csv_text.encode("utf-8-sig")
 
 
+def refresh_and_check_matched_documents(transactions: list[dict], client) -> tuple[list[str], set]:
+    """Prueft fuer alle uebergebenen Buchungen mit matched_docs, ob die
+    verknuepften Paperless-Dokumente noch existieren, und aktualisiert bei
+    noch existierenden Dokumenten den zwischengespeicherten Titel/
+    Dateinamen/Korrespondenten IN-PLACE. matched_docs ist ein Schnappschuss
+    vom Zeitpunkt der Zuordnung (siehe match_transactions) - ein Umbenennen
+    in Paperless wuerde ihn sonst nie aktualisieren, das Doc-Pill in der UI
+    zeigte dauerhaft den alten Namen.
+
+    Rueckgabe: (warnings, missing_ids) - warnings sind deutschsprachige
+    Meldungen fuer jedes Dokument, das nicht mehr gefunden wurde (z.B. in
+    Paperless geloescht, siehe generate_export-Docstring, der Export wird
+    dadurch NICHT verweigert). missing_ids wird an _export_receipts
+    weitergereicht, damit dort kein zweiter (redundanter) Download-
+    Versuch fuer bereits hier als fehlend erkannte Dokumente unternommen
+    wird - sonst gaebe es fuer dasselbe fehlende Dokument zwei Meldungen."""
+    correspondents_by_id: dict | None = None
+    warnings: list[str] = []
+    missing_ids: set = set()
+    for tx in transactions:
+        for doc in tx.get("matched_docs") or []:
+            try:
+                fresh = client.get_document(doc["id"])
+            except Exception as exc:
+                missing_ids.add(doc["id"])
+                name = doc.get("original_file_name") or doc.get("title") or f"Paperless-ID {doc['id']}"
+                warnings.append(
+                    f"Buchung #{tx.get('display_number') or tx['id']}: Dokument '{name}' (Paperless-ID {doc['id']}) "
+                    f"wurde nicht gefunden - moeglicherweise in Paperless geloescht ({exc})."
+                )
+                continue
+            if correspondents_by_id is None:
+                try:
+                    correspondents_by_id = {c["id"]: c.get("name") for c in client.get_correspondents()}
+                except Exception:
+                    correspondents_by_id = {}
+            doc["title"] = fresh.get("title")
+            doc["original_file_name"] = fresh.get("original_file_name")
+            doc["correspondent_name"] = correspondents_by_id.get(fresh.get("correspondent"))
+    return warnings, missing_ids
+
+
 def generate_export(
     export_base_dir: Path,
     month_str: str,
@@ -299,12 +369,18 @@ def generate_export(
     csv_df,
     csv_delimiter: str,
     client,
-) -> Path:
+) -> tuple[Path, list[str]]:
     """export_base_dir: der Ordner, in dem der Monatsordner angelegt wird -
     entweder der Standard-Exportordner oder ein vom Nutzer frei gewaehlter
     Zielordner (siehe desktop_state.AppState.get_export_base_dir). Prueft
     NICHT selbst auf offene Posten (siehe count_open_items) - der Export
-    bleibt bewusst auch bei offenen Posten moeglich (Anforderung 9)."""
+    bleibt bewusst auch bei offenen Posten moeglich (Anforderung 9).
+
+    Rueckgabe: (export_root, warnings) - warnings enthaelt Meldungen zu
+    Belegen, die nicht mehr in Paperless gefunden wurden (siehe
+    refresh_and_check_matched_documents/_export_receipts), im Normalfall
+    leer. Aktualisiert nebenbei zwischengespeicherte Titel/Dateinamen noch
+    vorhandener Dokumente in-place (transactions wird mutiert)."""
     export_root = Path(export_base_dir) / month_folder_name(month_str)
     export_root.mkdir(parents=True, exist_ok=True)
 
@@ -315,7 +391,9 @@ def generate_export(
 
     month_transactions = [t for t in transactions if t["date"].strftime("%Y-%m") == month_str]
 
-    receipt_paths = _export_receipts(month_transactions, belege_dir, client)
+    warnings, missing_ids = refresh_and_check_matched_documents(month_transactions, client)
+    receipt_paths, export_warnings = _export_receipts(month_transactions, belege_dir, client, missing_ids)
+    warnings.extend(export_warnings)
 
     (export_root / "00_Uebersicht.csv").write_bytes(
         _build_uebersicht_csv(month_transactions, csv_delimiter, receipt_paths)
@@ -333,7 +411,7 @@ def generate_export(
         _build_einzahlungen_csv(month_transactions, csv_delimiter)
     )
 
-    return export_root
+    return export_root, warnings
 
 
 def get_fiscal_year_months(start_year: int, fiscal_config: dict) -> list[str]:
@@ -386,7 +464,7 @@ def export_fiscal_year(
     company_name: str = "",
     logo_path: Path | None = None,
     on_progress=None,
-) -> Path:
+) -> tuple[Path, list[str]]:
     """Baut den kompletten Jahresexport: ruft generate_export() fuer jeden
     der 12 Monate des Geschaeftsjahres frisch aus transactions auf (siehe
     get_fiscal_year_months) - unabhaengig davon, ob fuer einen dieser
@@ -416,17 +494,23 @@ def export_fiscal_year(
     einmal je Monat VOR dessen Verarbeitung plus einmal fuer die
     abschliessenden Jahres-Zusammenfassungen - fuer eine Fortschrittsanzeige
     in der UI (siehe desktop_app_qt.FiscalYearExportWorker), da der
-    komplette Ablauf bei vielen Belegen mehrere Sekunden dauern kann."""
+    komplette Ablauf bei vielen Belegen mehrere Sekunden dauern kann.
+
+    Rueckgabe: (year_root, warnings) - warnings sammelt die Meldungen aller
+    12 Monate zu Belegen, die nicht mehr in Paperless gefunden wurden
+    (siehe generate_export), im Normalfall leer."""
     year_root = Path(export_base_dir) / fiscal_year_folder_name(start_year, fiscal_config)
     year_root.mkdir(parents=True, exist_ok=True)
 
     month_strs = get_fiscal_year_months(start_year, fiscal_config)
     total_steps = len(month_strs) + 1
+    warnings: list[str] = []
     for i, month_str in enumerate(month_strs, start=1):
         if on_progress:
             month_label = f"{_MONTH_NAMES_DISPLAY[int(month_str[5:7])]} {month_str[:4]}"
             on_progress(i, total_steps, f"Monat {i} von {len(month_strs)}: {month_label}")
-        generate_export(year_root, month_str, transactions, csv_df, csv_delimiter, client)
+        _month_root, month_warnings = generate_export(year_root, month_str, transactions, csv_df, csv_delimiter, client)
+        warnings.extend(month_warnings)
 
     if on_progress:
         on_progress(total_steps, total_steps, "Jahres-Zusammenfassungen werden erstellt ...")
@@ -443,7 +527,7 @@ def export_fiscal_year(
         )
     )
 
-    return year_root
+    return year_root, warnings
 
 
 def _build_jahresuebersicht_csv(

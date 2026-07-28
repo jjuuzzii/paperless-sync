@@ -261,7 +261,7 @@ class FiscalYearExportWorker(QObject):
     Signal, das export_fiscal_year je Verarbeitungsschritt aufruft."""
 
     progress = Signal(int, int, str)  # (aktueller Schritt, Gesamtschritte, Beschriftung)
-    finished = Signal(object, object)  # (export_path, error_message) - genau eines von beiden ist None
+    finished = Signal(object, object, object)  # (export_path, warnings, error_message) - error_message None bei Erfolg
 
     def __init__(self, controller, start_year: int):
         super().__init__()
@@ -270,13 +270,13 @@ class FiscalYearExportWorker(QObject):
 
     def run(self):
         try:
-            export_path = self.controller.on_export_fiscal_year_click(
+            export_path, warnings = self.controller.on_export_fiscal_year_click(
                 self.start_year, on_progress=lambda step, total, label: self.progress.emit(step, total, label)
             )
         except Exception as exc:
-            self.finished.emit(None, str(exc))
+            self.finished.emit(None, None, str(exc))
         else:
-            self.finished.emit(export_path, None)
+            self.finished.emit(export_path, warnings, None)
 
 
 class CardFrame(QFrame):
@@ -1762,12 +1762,32 @@ class DesktopAppQt(QMainWindow):
             if confirm != QMessageBox.Yes:
                 return
         try:
-            export_path = self.controller.on_generate_export_click(month)
+            export_path, warnings = self.controller.on_generate_export_click(month)
         except Exception as exc:
             QMessageBox.critical(self, tr("Export fehlgeschlagen"), str(exc))
             return
+        self._show_missing_document_warnings(warnings)
+        self.render()  # zeigt evtl. aktualisierte Beleg-Titel/Dateinamen sofort an
         QMessageBox.information(
             self, tr("Export fertig"), tr("Ordner erstellt:\n{export_path}", export_path=export_path)
+        )
+
+    def _show_missing_document_warnings(self, warnings: list[str]):
+        """Zeigt Belege an, die beim Export nicht mehr in Paperless gefunden
+        wurden (siehe exporter.refresh_and_check_matched_documents) - der
+        Export selbst ist trotzdem vollstaendig durchgelaufen, das ist nur
+        eine Information zum Nachpruefen."""
+        if not warnings:
+            return
+        QMessageBox.warning(
+            self,
+            tr("Belege nicht gefunden"),
+            tr(
+                "{count} zugeordnete(r) Beleg(e) konnte(n) nicht mehr in Paperless gefunden werden "
+                "(vermutlich dort gelöscht) und fehlen deshalb im Export:\n\n{details}",
+                count=len(warnings),
+                details="\n".join(warnings),
+            ),
         )
 
     def _on_export_fiscal_year_click(self):
@@ -1830,11 +1850,14 @@ class DesktopAppQt(QMainWindow):
         self._fiscal_export_progress.setValue(step)
         self._fiscal_export_progress.setLabelText(label)
 
-    def _on_fiscal_export_finished(self, export_path, error):
+    def _on_fiscal_export_finished(self, export_path, warnings, error):
         self._fiscal_export_progress.close()
         if error:
             QMessageBox.critical(self, tr("Export fehlgeschlagen"), error)
             return
+
+        self._show_missing_document_warnings(warnings or [])
+        self.render()  # zeigt evtl. aktualisierte Beleg-Titel/Dateinamen sofort an
 
         zip_confirm = QMessageBox.question(
             self,
