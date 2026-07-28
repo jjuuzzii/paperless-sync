@@ -170,7 +170,79 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO - wird in Schritt 4 ausgefuellt"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhaengigkeiten installieren (App + PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Platzhalter-.env anlegen
+        run: cp .env.example .env
+
+      - name: PyInstaller (Linux, onefile) ausfuehren
+        run: pyinstaller build/desktop_app_qt_linux.spec --clean --noconfirm --workpath .pyinstaller-work
+
+      - name: Portable tar.gz packen (immer verfuegbar, siehe Anforderung 4)
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          tar -czf "PaperlessSyncQt-${VERSION}-portable-linux.tar.gz" -C dist PaperlessSyncQt
+
+      - name: AppImage bauen
+        # Best-effort: appimagetool ist ein externer Download, und
+        # AppImages brauchen normalerweise FUSE, das auf GitHub-Runnern oft
+        # fehlt (--appimage-extract-and-run umgeht das). continue-on-error
+        # sorgt dafuer, dass ein Fehlschlag hier NICHT den ganzen Job
+        # abbricht - das tar.gz oben bleibt in jedem Fall als Fallback
+        # verfuegbar (Anforderung 4).
+        id: appimage
+        continue-on-error: true
+        run: |
+          set -e
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          mkdir -p AppDir/usr/bin
+          cp dist/PaperlessSyncQt AppDir/usr/bin/PaperlessSyncQt
+          chmod +x AppDir/usr/bin/PaperlessSyncQt
+          ln -sf usr/bin/PaperlessSyncQt AppDir/AppRun
+          chmod +x AppDir/AppRun
+
+          cat > AppDir/paperlesssync.desktop << 'DESKTOP_EOF'
+          [Desktop Entry]
+          Name=Paperless Sync
+          Exec=PaperlessSyncQt
+          Icon=paperlesssync
+          Type=Application
+          Categories=Office;Finance;
+          DESKTOP_EOF
+
+          # Kein Linux-taugliches Icon (PNG/SVG) im Repo hinterlegt (nur
+          # icon.ico fuer Windows, icon.icns fuer macOS) - Pillow ist ueber
+          # reportlab (requirements.txt) bereits eine transitive
+          # Abhaengigkeit, daher hier ohne zusaetzlichen Install nutzbar.
+          python3 -c "from PIL import Image; Image.new('RGBA', (256, 256), (0, 90, 156, 255)).save('AppDir/paperlesssync.png')"
+
+          wget -q -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "PaperlessSyncQt-${VERSION}-linux.AppImage"
+
+      - name: AppImage als Artefakt hochladen (nur falls erfolgreich gebaut)
+        if: steps.appimage.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: PaperlessSyncQt-*-linux.AppImage
+          if-no-files-found: warn
+
+      - name: Portables tar.gz als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-portable
+          path: PaperlessSyncQt-*-portable-linux.tar.gz
+          if-no-files-found: error
 
   release:
     name: GitHub Release erstellen
