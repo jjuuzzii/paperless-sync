@@ -350,6 +350,7 @@ _EN: dict[str, str] = {
     # --- Jahresexport ------------------------------------------------------
     "JAHRESEXPORT": "YEARLY EXPORT",
     "Jahresexport": "Yearly export",
+    "Jahresexport wird vorbereitet ...": "Preparing yearly export ...",
     "Start-Jahr des Geschäftsjahres": "Fiscal year start year",
     "Geschäftsjahr {label}": "Fiscal year {label}",
     "Keine Buchungen": "No transactions",

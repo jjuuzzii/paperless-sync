@@ -478,7 +478,7 @@ class Controller:
             state.get_export_base_dir(), month, state.transactions, state.csv_df, state.csv_delimiter, state.client
         )
 
-    def on_export_fiscal_year_click(self, start_year: int) -> Path:
+    def on_export_fiscal_year_click(self, start_year: int, on_progress=None) -> Path:
         state = self.state
         if not state.transactions:
             raise RuntimeError("Keine Transaktionen zum Exportieren vorhanden.")
@@ -497,6 +497,7 @@ class Controller:
             state.client,
             company_name=state.env.get("COMPANY_NAME") or "",
             logo_path=logo_path,
+            on_progress=on_progress,
         )
 
     # --- Hilfsfunktionen ------------------------------------------------

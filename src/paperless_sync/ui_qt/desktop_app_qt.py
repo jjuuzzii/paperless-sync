@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QDialog,
     QListWidget,
+    QProgressDialog,
 )
 
 # sys.path (Repo-Root + src/) wird vom Einstiegspunkt (run_app.py) VOR dem
@@ -249,6 +250,33 @@ class DocDownloadWorker(QObject):
             self.finished.emit(None, str(exc))
         else:
             self.finished.emit(pdf_bytes, None)
+
+
+class FiscalYearExportWorker(QObject):
+    """Baut den Jahresexport (12x generate_export + drei Jahres-
+    Zusammenfassungen, siehe exporter.export_fiscal_year) in einem eigenen
+    Thread aus - kann bei vielen Belegen/Paperless-Downloads mehrere
+    Sekunden dauern, sonst friert die UI dafuer komplett ein (gleiches
+    Muster wie MatchWorker). Meldet den Fortschritt ueber das progress-
+    Signal, das export_fiscal_year je Verarbeitungsschritt aufruft."""
+
+    progress = Signal(int, int, str)  # (aktueller Schritt, Gesamtschritte, Beschriftung)
+    finished = Signal(object, object)  # (export_path, error_message) - genau eines von beiden ist None
+
+    def __init__(self, controller, start_year: int):
+        super().__init__()
+        self.controller = controller
+        self.start_year = start_year
+
+    def run(self):
+        try:
+            export_path = self.controller.on_export_fiscal_year_click(
+                self.start_year, on_progress=lambda step, total, label: self.progress.emit(step, total, label)
+            )
+        except Exception as exc:
+            self.finished.emit(None, str(exc))
+        else:
+            self.finished.emit(export_path, None)
 
 
 class CardFrame(QFrame):
@@ -1773,10 +1801,39 @@ class DesktopAppQt(QMainWindow):
             if confirm != QMessageBox.Yes:
                 return
 
-        try:
-            export_path = self.controller.on_export_fiscal_year_click(start_year)
-        except Exception as exc:
-            QMessageBox.critical(self, tr("Export fehlgeschlagen"), str(exc))
+        # Laeuft im Hintergrund (siehe FiscalYearExportWorker) - 12 Monate +
+        # PDF-Erzeugung koennen bei vielen Belegen mehrere Sekunden dauern,
+        # der Fortschrittsdialog haelt die UI waehrenddessen ansprechbar
+        # (kein Freeze) und zeigt sichtbaren Fortschritt statt eines
+        # scheinbar haengenden Fensters.
+        self._fiscal_export_progress = QProgressDialog(
+            tr("Jahresexport wird vorbereitet ..."), "", 0, 0, self
+        )
+        self._fiscal_export_progress.setWindowTitle(tr("Jahresexport"))
+        self._fiscal_export_progress.setWindowModality(Qt.WindowModal)
+        self._fiscal_export_progress.setMinimumDuration(0)
+        self._fiscal_export_progress.setCancelButton(None)  # laufender Export laesst sich nicht sauber abbrechen
+        self._fiscal_export_progress.setValue(0)
+        self._fiscal_export_progress.show()
+
+        self._fiscal_export_thread = QThread()
+        self._fiscal_export_worker = FiscalYearExportWorker(self.controller, start_year)
+        self._fiscal_export_worker.moveToThread(self._fiscal_export_thread)
+        self._fiscal_export_thread.started.connect(self._fiscal_export_worker.run)
+        self._fiscal_export_worker.progress.connect(self._on_fiscal_export_progress)
+        self._fiscal_export_worker.finished.connect(self._on_fiscal_export_finished)
+        self._fiscal_export_worker.finished.connect(self._fiscal_export_thread.quit)
+        self._fiscal_export_thread.start()
+
+    def _on_fiscal_export_progress(self, step: int, total: int, label: str):
+        self._fiscal_export_progress.setMaximum(total)
+        self._fiscal_export_progress.setValue(step)
+        self._fiscal_export_progress.setLabelText(label)
+
+    def _on_fiscal_export_finished(self, export_path, error):
+        self._fiscal_export_progress.close()
+        if error:
+            QMessageBox.critical(self, tr("Export fehlgeschlagen"), error)
             return
 
         zip_confirm = QMessageBox.question(
