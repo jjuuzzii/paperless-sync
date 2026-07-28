@@ -248,5 +248,37 @@ jobs:
     name: GitHub Release erstellen
     needs: [check-version, windows-build, macos-build, linux-build]
     runs-on: ubuntu-latest
+    # Standard-GITHUB_TOKEN ist je nach Repo-/Org-Einstellung nur
+    # lesend - softprops/action-gh-release braucht Schreibrechte, um
+    # Tag+Release anzulegen und Assets hochzuladen.
+    permissions:
+      contents: write
     steps:
-      - run: echo "TODO - wird in Schritt 5 ausgefuellt"
+      - name: Alle Build-Artefakte herunterladen
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Heruntergeladene Artefakte auflisten (Fehlersuche bei fehlenden Dateien)
+        run: find artifacts -type f
+
+      - name: GitHub Release erstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          # Bei einem echten Versions-Tag (push) wird GENAU dieser Tag
+          # veroeffentlicht. Bei workflow_dispatch (Testlauf ohne echten
+          # Tag, siehe Schritt 7) landet stattdessen ein eigener,
+          # unverwechselbarer Test-Tag als DRAFT im Repo - draft-Releases
+          # sind fuer normale Nutzer nicht sichtbar/"veroeffentlicht" und
+          # koennen nach dem Testen einfach geloescht werden.
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('manual-test-{0}', github.run_id) }}
+          name: Paperless Sync v${{ needs.check-version.outputs.version }}
+          draft: ${{ github.event_name != 'push' }}
+          prerelease: ${{ needs.check-version.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/windows-portable/*.zip
+            artifacts/macos-app/*.zip
+            artifacts/linux-appimage/*.AppImage
+            artifacts/linux-portable/*.tar.gz
